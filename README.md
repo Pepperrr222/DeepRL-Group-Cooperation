@@ -1,2 +1,98 @@
-# DeepRL-Group-Cooperation
-Replication and Extension of "Scaffolding cooperation in human groups with deep reinforcement learning" using Graph Neural Networks.
+1. # 项目大纲：图神经网络在合作博弈中的应用
+
+   **论文名称：** Scaffolding cooperation in human groups with deep reinforcement learning (NHB 2023)
+
+   **项目目标：** 复现论文中的“社会规划器”（Social Planner）模型和实验结果，并进行关键的延伸性研究与讨论。
+
+   **工具：** Python, PyTorch/TensorFlow, PyTorch Geometric/DGL, GitHub (代码管理), Google Colab (训练与实验)。
+
+   ## 阶段一：论文核心架构复现 (Replication)
+
+   目标是完全重建论文中的博弈环境、Bot 行为模型，以及 GraphNet Social Planner。
+
+   ### 1. 网络合作博弈环境实现 (`src/environment.py`)
+
+   - **环境初始化：** 创建一个包含 N=16 个玩家的图结构（初始网络结构需参照论文）。
+   - **博弈规则实现：**
+     - 定义每个回合 (15 回合) 的流程。
+     - 实现**合作/背叛**的行动空间。
+     - 实现**收益函数**：精确计算合作成本 ($c=0.05$) 和邻居收益 ($b=0.1$)，确保个体资本更新正确。
+   - **网络动态性：** 实现社交规划器推荐行动（建立/断开连接）和玩家接受推荐后的网络拓扑更新机制。
+
+   ### 2. 人类行为模拟器 (Bot) 实现 (`src/bot_simulator.py`)
+
+   - **合作决策逻辑：** 根据论文补充材料中的逻辑函数和参数，实现 Bot 基于**自身倾向**、**邻居合作率**、**当前回合数**等因素的合作（Cooperate/Defect）概率模型。
+   - **推荐接受逻辑：** 实现 Bot 基于**推荐效价**（建立/断开）和**邻居行为**（上一回合是否合作）来接受或拒绝社交规划器推荐的概率模型。
+   - **Bot 参数化：** 确保 Bot 的行为参数（如合作倾向、公平偏好等）与论文中的实验设置一致。
+
+   ### 3. 社会规划器（GNN Agent）架构实现 (`src/social_planner_agent.py`)
+
+   - **DRL 框架：** 采用 **A2C (Advantage Actor-Critic)** 算法作为基础训练框架。
+   - **GraphNet 架构：**
+     - 实现基于**消息传递**的图神经网络结构（非循环，具有两个消息传递步骤）。
+     - **输入特征 (**$\mathbf{u}, \mathbf{V}, \mathbf{E}$**)**：精确提取图结构、节点特征（如上一回合的决策、资本）、全局特征（如群体平均合作率）和边特征。
+     - **输出层：** Actor 部分输出每条边建立/断开连接的 **Logits**；Critic 部分输出当前状态的 **价值估计**。
+
+   ### 4. DRL 训练与复现 (`src/train.py`)
+
+   - **训练流程：** 实现规划器与 Bot 模拟器进行**端到端**训练的循环。
+   - **损失函数：** 实现 A2C 损失函数（策略损失、价值损失、熵损失）。
+   - **超参数：** 严格遵循论文补充材料的学习率、折扣因子、批次大小等设置。
+
+   ## 阶段二：评估与基线对比 (Evaluation & Baselines)
+
+   目标是验证复现结果的有效性，并与论文中提及的基线策略进行对比。
+
+   ### 1. 核心评估指标
+
+   - **群体平均合作率 (Cooperation Rate)**：衡量规划器在 15 回合结束时促进合作的有效性。
+   - **群体总福利 (Group Welfare)**：衡量群体总资本的增长情况。
+   - **资本平等性 (Equality)**：使用**洛伦兹曲线**或**基尼系数**分析最终资本分配的公平性。
+   - **网络拓扑分析**：量化网络结构，检查是否形成论文中提及的**核心-边缘结构 (Core-Periphery)**。
+
+   ### 2. 基线模型对比
+
+   - **静态网络 (Static Network)**：网络结构在整个博弈过程中保持不变。
+   - **随机推荐 (Random Recommendations)**：规划器随机推荐改变 30% 的连接。
+   - **合作聚类策略 (Cooperative Clustering)**：基于简单的启发式规则：
+     - **断开**：背叛者与合作者之间的连接。
+     - **建立**：合作者与合作者之间的连接。
+
+   ### 3. 结果验证
+
+   将训练后的 GraphNet Agent 与以上所有基线进行**多次独立实验**，确保合作率等关键指标的复现结果与论文吻合。
+
+   ## 阶段三：深入分析与延伸 (Extension & Discussion)
+
+   目标是超越复现，探讨模型的内在机制和泛化能力。
+
+   ### 1. 可解释性研究：鼓励规划器 (Encouragement Planner)
+
+   - **任务：** 根据论文中对 GraphNet 策略的分析，手动实现一个**基于规则的“鼓励”规划器**（使用简单的逻辑判断和概率）。
+   - **对比：** 比较该规则规划器与 DRL 训练的 GraphNet 在性能上的差距。
+   - **讨论：** 讨论复杂 DRL Agent 行为是否可以用少数可解释的规则来近似，以及 DRL 在社交场景中学习到的“反直觉”策略（如初期连接背叛者）的价值。
+
+   ### 2. 机制研究：奖励与合作的悖论
+
+   - **任务：** 深入分析在 GraphNet 引导下的博弈中，合作者和背叛者个体的**平均收益**。
+   - **挑战与讨论：** 探究为什么 Social Planner 允许“背叛者的平均收益高于合作者”这一现象存在，但群体合作率仍然很高。这如何挑战传统博弈论中基于个体收益最大化的激励机制？
+
+   ### 3. GNN 架构变体研究
+
+   - **任务：** 用其他流行的 GNN 变体替换 GraphNet 的核心组件。
+     - **GCN (Graph Convolutional Networks)**
+     - **GAT (Graph Attention Networks)**
+     - **GraphSAGE (Graph SAmple and aggreGatE)**
+   - **评估：** 重新训练这些变体，并比较它们在促进合作、生成核心-边缘结构和追求公平性方面的性能差异。
+   - **结论：** 总结 GraphNet 相比其他 GNN 在建模社会关系方面的独特优势（如果有）。
+
+   ## 项目交付与协作规范 (Deliverables & Collaboration)
+
+   - **GitHub 结构：**
+     - `README.md`: 项目介绍、大纲、安装/运行指南。
+     - `data/`: 存储训练日志、评估结果（CSV/JSON）。
+     - `src/`: 核心代码目录（如上所示）。
+     - `notebooks/`: 包含 Colab 实验 Notebooks (`.ipynb`)。
+     - `extension/`: 延伸任务代码。
+   - **代码规范：** 遵循清晰的函数命名、类型提示和详细的注释。
+   - **结果可视化：** 使用 Matplotlib/Seaborn 等库生成清晰的图表，可视化合作率曲线、洛伦兹曲线和网络拓扑图。
