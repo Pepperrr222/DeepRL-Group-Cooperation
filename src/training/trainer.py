@@ -11,15 +11,17 @@ from src.planner.policy import SocialPlannerPolicy
 class SocialPlannerTrainer:
     def __init__(self, 
                  num_players=16, 
-                 lr=1e-3, 
+                 lr=0.0004, 
                  gamma=0.99, 
-                 entropy_coef=0.01,
-                 penalty_factor=0.5): # <--- [新增] 惩罚参数 P (默认设为 0.5)
+                 entropy_coef=0.004,
+                 penalty_factor=0.5,
+                 batch_size=1): # batch_size 占位（可用于后续扩展）
         
         self.num_players = num_players
         self.gamma = gamma
         self.entropy_coef = entropy_coef
         self.penalty_factor = penalty_factor # 存储 P
+        self.batch_size = batch_size
         
         # 1. 初始化三大件
         self.env = NetworkGameEnv(num_players=num_players)
@@ -27,9 +29,9 @@ class SocialPlannerTrainer:
         
         # 2. 初始化 AI 模型
         self.planner = SocialPlannerAgent(input_node_dim=2, 
-                                          input_edge_dim=1, 
-                                          input_global_dim=1,
-                                          hidden_dim=64)
+                          input_edge_dim=1, 
+                          input_global_dim=1,
+                          hidden_dim=128)
         
         self.policy = SocialPlannerPolicy()
         
@@ -65,8 +67,13 @@ class SocialPlannerTrainer:
         rewards = []
         entropies = []
         
-        current_payoffs = np.zeros(self.num_players)
-        last_actions = np.zeros(self.num_players)
+        # 初始资金：将每个玩家的初始收益设为 1
+        current_payoffs = np.ones(self.num_players)
+        # Sample initial actions according to bots' initial cooperation tendency
+        if not hasattr(self, 'bots') or self.bots is None:
+            self.bots = HumanBot(self.num_players)
+        init_actions, _ = self.initial_cooperation(sample=True, seed=None)
+        last_actions = init_actions
         
         total_cooperation_rate = 0
         
@@ -149,6 +156,97 @@ class SocialPlannerTrainer:
             "total_reward": np.sum(rewards),
             "loss": loss_value
         }
+
+    def run_episode_record(self, max_rounds=15):
+        """
+        Run an episode without training and record adjacency + actions at each round.
+        Returns a dict with lists 'adjs' and 'actions'.
+        'adjs'[0] is the initial adjacency before any round; subsequent entries are after each round.
+        """
+        self.env = NetworkGameEnv(self.num_players)
+        self.bots = HumanBot(self.num_players)
+
+        current_payoffs = np.ones(self.num_players)
+        # Sample initial actions according to bots' initial cooperation tendency
+        if not hasattr(self, 'bots') or self.bots is None:
+            self.bots = HumanBot(self.num_players)
+        init_actions, _ = self.initial_cooperation(sample=True, seed=None)
+        last_actions = init_actions
+
+        adjs = []
+        actions_hist = []
+
+        # record initial state (round 0)
+        adjs.append(self.env.adj_matrix.copy())
+        actions_hist.append(last_actions.copy())
+
+        for r in range(max_rounds):
+            x, edge_attr, u = self.feature_adapter(
+                self.env.adj_matrix, last_actions, current_payoffs, r, max_rounds
+            )
+
+            edge_logits, value_est = self.planner(x, edge_attr, u)
+            proposed_adj_tensor, log_prob, entropy = self.policy.get_action(edge_logits, deterministic=True)
+            proposed_adj = proposed_adj_tensor.squeeze(0).cpu().numpy()
+
+            current_adj = self.env.adj_matrix
+            final_adj = current_adj.copy()
+
+            for i in range(self.num_players):
+                for j in range(i + 1, self.num_players):
+                    if proposed_adj[i][j] != current_adj[i][j]:
+                        action_type = 1 if proposed_adj[i][j] == 1 else -1
+                        accept_i = self.bots.decide_acceptance(i, j, action_type, last_actions[j])
+                        accept_j = self.bots.decide_acceptance(j, i, action_type, last_actions[i])
+                        if accept_i and accept_j:
+                            final_adj[i][j] = final_adj[j][i] = proposed_adj[i][j]
+
+            self.env.update_graph(final_adj)
+            actions = self.bots.decide_cooperation(self.env.adj_matrix, current_round=r)
+            step_payoffs = self.env.calculate_payoffs(actions)
+
+            current_payoffs = step_payoffs
+            last_actions = actions
+
+            adjs.append(self.env.adj_matrix.copy())
+            actions_hist.append(actions.copy())
+
+        return {
+            "adjs": adjs,
+            "actions": actions_hist
+        }
+
+    def initial_cooperation(self, sample=False, seed=None):
+        """
+        返回初始回合（尚未开始游戏时）的合作概率或采样动作。
+
+        Args:
+            sample (bool): 如果 True，则对每个玩家按概率采样 0/1 并返回(actions, probs)
+            seed (int|None): 可选随机种子，用于采样可复现
+
+        Returns:
+            probs (np.ndarray): 每个玩家在第0回合的合作概率
+            如果 sample=True，则返回 (actions, probs)
+        """
+        if seed is not None:
+            np.random.seed(seed)
+
+        # 确保有 bots 实例
+        if not hasattr(self, 'bots') or self.bots is None:
+            self.bots = HumanBot(self.num_players)
+
+        dispositions = self.bots.dispositions
+        b0 = self.bots.beta_initial['beta0']
+        b1 = self.bots.beta_initial['beta1']
+
+        logit = b0 + b1 * dispositions
+        probs = 1.0 / (1.0 + np.exp(-logit))
+
+        if sample:
+            actions = np.random.binomial(1, probs)
+            return actions, probs
+
+        return probs
 
     # ... (update_model 保持不变，它只负责 A2C 梯度计算) ...
     def update_model(self, rewards, values, log_probs, entropies):

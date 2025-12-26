@@ -1,7 +1,7 @@
 import numpy as np
 
 class HumanBot:
-    def __init__(self, num_players, mu_theta=0.0, sigma_theta=1.0):
+    def __init__(self, num_players, mu_theta=-0.304, sigma_theta=2.410):
         self.num_players = num_players
         
         # 1. 初始化性格参数 theta_i (从正态分布采样)
@@ -12,16 +12,16 @@ class HumanBot:
         # 这些参数决定了环境因素(邻居数量等)如何影响合作概率
         # 我们这里使用一组示例参数，实际复现时通常需要从真实数据拟合或使用论文附录的具体数值
         self.beta = {
-            'beta0': -2.0,  # 截距
-            'beta1': 0.1,   # 邻居总数 (xs) 的权重
-            'beta2': 0.5,   # 合作邻居数 (xn) 的权重
-            'beta3': 1.0    # 邻居合作率 (xr) 的权重
+            'beta0': -0.010,  # 截距
+            'beta1': 0.193,   # 邻居总数 (xs) 的权重
+            'beta2': 0.370,   # 合作邻居数 (xn) 的权重
+            'beta3': 1.521    # 邻居合作率 (xr) 的权重
         }
         
         # 第一回合的参数 (因为第一回合没有历史数据)
         self.beta_initial = {
-            'beta0': -0.5,
-            'beta1': 1.0    # 作用于 theta
+            'beta0': 1.807,
+            'beta1': 0.818    # 作用于 theta
         }
 
         # 3. 接受建议的概率参数 (Phi)
@@ -31,7 +31,7 @@ class HumanBot:
         # phi1: break link given coop (通常概率较低)
         # phi2: make link given defect (通常概率较低)
         # phi3: make link given coop (通常概率较高)
-        self.phi = [0.9, 0.1, 0.2, 0.8] 
+        self.phi = [0.774, 0.085, 0.287, 0.909] 
 
         # 记录上一轮的动作，用于决策
         self.last_actions = np.zeros(num_players)

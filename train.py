@@ -17,7 +17,11 @@ def main():
     print("-" * 50)
     
     # --- 2. 初始化训练器 ---
-    trainer = SocialPlannerTrainer(num_players=16, lr=0.001)
+    trainer = SocialPlannerTrainer(num_players=16,
+                                   lr=0.0004,
+                                   gamma=0.99,
+                                   entropy_coef=0.004,
+                                   batch_size=32)
     
     # 用于记录数据画图
     history = {
