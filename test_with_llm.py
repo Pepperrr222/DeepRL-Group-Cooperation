@@ -41,7 +41,7 @@ def main():
                   mock=MOCK_MODE)
     
     # 3. 跑 3 轮测试
-    MAX_ROUNDS = 3 
+    MAX_ROUNDS = 10
     history_coop = []
     
     current_payoffs = np.zeros(16)
