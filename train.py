@@ -8,8 +8,8 @@ from src.training.trainer import SocialPlannerTrainer
 
 def main():
     # --- 1. 配置参数 ---
-    MAX_EPISODES = 2000   # 训练多少局 (论文可能训练了几万局，演示用2000即可看到效果)
-    PRINT_INTERVAL = 50   # 每隔多少局打印一次日志
+    MAX_EPISODES = 10000   # 训练多少局 (论文可能训练了几万局，演示用2000即可看到效果)
+    PRINT_INTERVAL = 100   # 每隔多少局打印一次日志
     SAVE_PATH = "saved_models"
     os.makedirs(SAVE_PATH, exist_ok=True)
     
