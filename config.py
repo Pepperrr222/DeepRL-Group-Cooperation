@@ -20,15 +20,17 @@ class BotConfig:
     SIGMA_THETA = 2.410
     
     # 合作决策参数
-    BETA_0 = 1.807
-    BETA_1 = 0.818       # 邻居数量系数
-  
+    
+    BETA_0 = -0.010
+    BETA_1 = -0.193
+    BETA_2 = 0.370      
+    BETA_3 = 1.521
     
     # 第一轮特殊参数
-    BETA_PRIME_0 = -0.010
-    BETA_PRIME_1 = -0.193
-    BETA_2 = 0.370      
-    BETA_3 = 1.521       
+    
+    BETA_PRIME_0 = 1.807
+    BETA_PRIME_1 = 0.818 
+       
     
     # 建议接受概率 (Supp Table 3 & E4)
     # Key格式: (Recommendation, Partner_Action)
@@ -55,6 +57,6 @@ class TrainConfig:
     GAMMA = 0.99
     ENTROPY_COEF = 0.004
     VALUE_LOSS_COEF = 0.5
-    MAX_EPISODES = 5000 # 演示用，论文中是 5e7 steps
+    MAX_EPISODES = 500000 # 演示用，论文中是 5e7 steps
     LOG_INTERVAL = 10
     DEVICE = "cuda" # or "cpu"
