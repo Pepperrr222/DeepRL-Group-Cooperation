@@ -125,7 +125,7 @@ class Trainer:
                 print(f"Ep {episode:4d} | Reward: {avg_reward:6.2f} | Coop Rate: {avg_coop:6.2%} | Loss: {loss.item():6.3f} (P:{p_loss:5.2f} V:{v_loss:5.2f} E:{e_loss:5.2f})")
                 
                 # 定期保存 (例如每 500 轮)
-                if episode % 100 == 0:
+                if episode % 10000 == 0:
                     self.save_checkpoint(episode)
 
         # 训练结束保存最终模型
