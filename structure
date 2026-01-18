@@ -1,0 +1,18 @@
+social_planner/
+├── config.py           # 所有超参数（对应论文 Supplementary Tables）
+├── main.py             # 程序入口
+├── env/
+│   ├── __init__.py
+│   ├── bots.py         # 模拟人类行为逻辑 (Bot Simulation)
+│   └── game.py         # 游戏核心逻辑 (Public Goods Game on Graph)
+├── model/
+│   ├── __init__.py
+│   ├── graph_net.py    # GNN 核心组件
+│   └── agent.py        # Social Planner Agent (Policy & Value Heads)
+├── training/
+│   ├── __init__.py
+│   ├── a2c.py          # A2C 算法损失函数计算
+│   └── trainer.py      # 训练循环与日志管理
+└── utils/
+    ├── __init__.py
+    └── init_weights.py # 论文指定的权重初始化方法

@@ -1,0 +1,12 @@
+config/PENALTY_WEIGHT_P = 1.0 
+init_weights
+
+
+a2c
+trainer
+
+graph
+
+agent
+
+game

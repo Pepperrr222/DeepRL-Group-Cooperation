@@ -1,0 +1,17 @@
+# 忽略 Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 忽略虚拟环境 (如果你以后在文件夹里创建了的话)
+venv/
+.env/
+
+# 忽略模型权重文件 (通常很大，不建议直接放 GitHub)
+*.pth
+*.pt
+*.h5
+
+# 忽略日志文件
+logs/
+*.log
