@@ -1,4 +1,3 @@
-# env/bots.py
 import torch
 from config import BotConfig, GameConfig
 
@@ -8,7 +7,6 @@ class SimulatedBots:
         self.device = device
         self.n_players = GameConfig.N_PLAYERS
         
-        # 初始化玩家性格 (Theta)
         self.theta = torch.normal(
             BotConfig.MU_THETA, 
             BotConfig.SIGMA_THETA, 
@@ -17,50 +15,46 @@ class SimulatedBots:
         )
 
     def decide_cooperation(self, round_num, adj_matrix, prev_decisions, current_capital):
-        """
-        根据当前网络状态、性格以及资金状况决定是否合作。
-        Added: current_capital (B, N)
-        """
-        # 1. 计算基于性格和社交环境的合作意愿 (Logits)
-        x_s = adj_matrix.sum(dim=2) # Degree (B, N)
+        # 1. 计算原始特征
+        x_s = adj_matrix.sum(dim=2) # Degree
         
         prev_decisions_exp = prev_decisions.unsqueeze(1).expand(-1, self.n_players, -1)
-        x_n = (adj_matrix * prev_decisions_exp).sum(dim=2) # Cooperating neighbors
+        x_n = (adj_matrix * prev_decisions_exp).sum(dim=2) # Num Coop Neighbors
         
         x_r = torch.zeros_like(x_s)
         mask_degree = x_s > 0
-        x_r[mask_degree] = x_n[mask_degree] / x_s[mask_degree] # Cooperation rate
+        x_r[mask_degree] = x_n[mask_degree] / x_s[mask_degree] # Rate
 
+        # 2. 计算 Logits
         if round_num == 0:
+            # Round 1: 使用修正后的高截距
+            # 注意：Round 1 只有 theta 影响，或者你可以保留 beta_prime_1
             logits = BotConfig.BETA_PRIME_0 + BotConfig.BETA_PRIME_1 * self.theta
         else:
+            # Round > 1: 标准化 + 修正后的系数
+            x_s_std = (x_s - BotConfig.MEAN_NEIGHBORS) / BotConfig.STD_NEIGHBORS
+            x_n_std = (x_n - BotConfig.MEAN_COOP_NEIGHBORS) / BotConfig.STD_COOP_NEIGHBORS
+            x_r_std = (x_r - BotConfig.MEAN_FRAC_COOP) / BotConfig.STD_FRAC_COOP
+            
             logits = (BotConfig.BETA_0 + 
-                      BotConfig.BETA_1 * x_s + 
-                      BotConfig.BETA_2 * x_n + 
-                      BotConfig.BETA_3 * x_r + 
+                      BotConfig.BETA_1 * x_s_std + 
+                      BotConfig.BETA_2 * x_n_std + 
+                      BotConfig.BETA_3 * x_r_std + 
                       self.theta)
         
         probs = torch.sigmoid(logits)
         initial_decisions = torch.bernoulli(probs)
         
-        # 2. 强制背叛逻辑 (Forced Defection) - 论文 Eq(2)
-        # 合作成本 = c * degree
+        # 3. 强制背叛 (资金不足)
         potential_cost = GameConfig.COST_C * x_s
-        
-        # 如果当前资金 < 潜在合作成本，强制设为不合作(0)
-
         cannot_afford_mask = current_capital < potential_cost
         
-        # 将无法支付成本的玩家决策强制置为 0
         final_decisions = initial_decisions.clone()
         final_decisions[cannot_afford_mask] = 0.0
         
         return final_decisions
 
     def decide_acceptance(self, recommendations, prev_decisions):
-        """
-        决定是否接受 Agent 的连线/断线建议。
-        """
         B, N, _ = recommendations.shape
         accept_probs = torch.zeros_like(recommendations, dtype=torch.float)
         

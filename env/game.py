@@ -12,11 +12,7 @@ class PublicGoodsGame:
         self.current_round = 0
         
     def reset(self):
-        """
-        初始化游戏。
-        根据论文逻辑，Agent 第一次观察时需要看到"上一轮的决策"。
-        因此，reset() 中必须执行 Round 1 的博弈。
-        """
+        
         self.current_round = 0
         
         # 1. 初始图生成 (Erdos-Renyi)

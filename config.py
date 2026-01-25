@@ -1,41 +1,41 @@
-# config.py
 class GameConfig:
-    # 基础设置
     N_PLAYERS = 16
     EPISODE_LENGTH = 15
     ERDOS_RENYI_P = 0.3
-    
-    # 经济参数 (Paper Section A)
     INITIAL_CAPITAL = 1.0
     BENEFIT_B = 0.1
     COST_C = 0.05
-    
-    # 奖励函数参数 (Supp E3)
-    # U_SP = (1/n * sum(d_i)) - P * (1/m * sum(changes))                               ***
     PENALTY_WEIGHT_P = 1.0 
 
 class BotConfig:
-    # 模拟人类参数 (Supp Table 3)
+    # 模拟人类参数
+
+    
     MU_THETA = -0.304
     SIGMA_THETA = 2.410
     
-    # 合作决策参数
+    # --- 标准化统计量 ---
+    MEAN_NEIGHBORS = 4.55
+    STD_NEIGHBORS = 1.78
+    MEAN_COOP_NEIGHBORS = 2.50
+    STD_COOP_NEIGHBORS = 1.67
+    MEAN_FRAC_COOP = 0.55
+    STD_FRAC_COOP = 0.32
+
+ 
+    BETA_PRIME_0 = 1.807  
+    BETA_PRIME_1 = 0.818  
+
+
+    BETA_0 = -0.010  
     
-    BETA_0 = -0.010
-    BETA_1 = -0.193
-    BETA_2 = 0.370      
-    BETA_3 = 1.521
+
+    BETA_1 = -0.75   
     
-    # 第一轮特殊参数
+    BETA_2 = 1.16    
+    BETA_3 = 0.46     
     
-    BETA_PRIME_0 = 1.807
-    BETA_PRIME_1 = 0.818 
-       
-    
-    # 建议接受概率 (Supp Table 3 & E4)
-    # Key格式: (Recommendation, Partner_Action)
-    # Recommendation: -1 (Delete), 1 (Add)
-    # Partner_Action: 0 (Defect), 1 (Cooperate)
+
     ACCEPT_PROBS = {
         (-1, 0): 0.774, 
         (-1, 1): 0.085,
@@ -44,19 +44,17 @@ class BotConfig:
     }
 
 class ModelConfig:
-    # 神经网络参数 (Supp Table 4)
     HIDDEN_DIM = 128
-    NODE_IN_DIM = 2     # (Capital, Prev_Decision)
-    EDGE_IN_DIM = 1     # (Exists?)
-    GLOBAL_IN_DIM = 1   # (Time step / normalized)
+    NODE_IN_DIM = 2
+    EDGE_IN_DIM = 1
+    GLOBAL_IN_DIM = 1
     
 class TrainConfig:
-    # 训练参数 (Supp Table 5)
     BATCH_SIZE = 32
     LR = 0.0004
     GAMMA = 0.99
     ENTROPY_COEF = 0.004
     VALUE_LOSS_COEF = 0.5
-    MAX_EPISODES = 500000 # 演示用，论文中是 5e7 steps
+    MAX_EPISODES = 500000 
     LOG_INTERVAL = 10
-    DEVICE = "cuda" # or "cpu"
+    DEVICE = "cuda"

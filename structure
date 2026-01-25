@@ -1,18 +1,11 @@
 social_planner/
-├── config.py           # 所有超参数（对应论文 Supplementary Tables）
-├── main.py             # 程序入口
-├── env/
-│   ├── __init__.py
-│   ├── bots.py         # 模拟人类行为逻辑 (Bot Simulation)
-│   └── game.py         # 游戏核心逻辑 (Public Goods Game on Graph)
-├── model/
-│   ├── __init__.py
-│   ├── graph_net.py    # GNN 核心组件
-│   └── agent.py        # Social Planner Agent (Policy & Value Heads)
-├── training/
-│   ├── __init__.py
-│   ├── a2c.py          # A2C 算法损失函数计算
-│   └── trainer.py      # 训练循环与日志管理
-└── utils/
-    ├── __init__.py
-    └── init_weights.py # 论文指定的权重初始化方法
+├── checkpoints/           # 存放训练好的模型 (final_model.pth)
+├── planners/              # 策略包 (包含 GraphNet, Static, Rules 等)
+├── env/                   # 游戏环境 & Bot 模拟逻辑
+├── model/                 # 神经网络架构
+├── training/              # 训练循环逻辑
+├── config.py              # 全局参数配置
+├── train.py               # [训练入口]
+├── ave.py                 # [宏观] 大规模基准测试 (如 10万局)
+├── single_game.py         # [微观] 单局游戏演示 (含实时渲染)
+└── evaluate_stats.py      # [统计] 快速评估 100 局统计数据

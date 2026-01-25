@@ -61,7 +61,7 @@ def run_static_baseline(num_games=10000000):
     df = pd.DataFrame(stats)
     
     print("\n" + "="*60)
-    print(f"📊 100局游戏平均数据 (无Agent干预/静态网络)")
+    print(f" 100局游戏平均数据 (无Agent干预/静态网络)")
     print("="*60)
     # 格式化打印
     print(df.to_string(index=False, formatters={
@@ -76,13 +76,9 @@ def run_static_baseline(num_games=10000000):
     final_cap = df.iloc[-1]["Avg Capital"]
     start_coop = df.iloc[0]["Coop Rate"]
     
-    print(f"📉 合作率变化: {start_coop:.2%} -> {final_coop:.2%}")
-    print(f"💰 最终平均资金: ${final_cap:.2f}")
-    
-    if final_coop < start_coop:
-        print("\n[结论] 符合公地悲剧：在没有外部干预的情况下，合作率随时间下降。")
-    else:
-        print("\n[结论] 异常：合作率未下降 (检查 Bot 参数是否过于友善)。")
+    print(f" 合作率变化: {start_coop:.2%} -> {final_coop:.2%}")
+    print(f" 最终平均资金: ${final_cap:.2f}")
+
 
 if __name__ == "__main__":
     # 需要安装 pandas: pip install pandas
