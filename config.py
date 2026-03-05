@@ -55,6 +55,6 @@ class TrainConfig:
     GAMMA = 0.99
     ENTROPY_COEF = 0.004
     VALUE_LOSS_COEF = 0.5
-    MAX_EPISODES = 500000 
+    MAX_EPISODES = 400000 
     LOG_INTERVAL = 10
     DEVICE = "cuda"

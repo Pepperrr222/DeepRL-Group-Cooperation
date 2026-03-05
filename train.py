@@ -1,118 +1,52 @@
 # train.py
 import argparse
-import time
 import random
 import numpy as np
 import torch
-import sys
-import os
-
-# 导入配置和训练器
+import multiprocessing as mp
 from config import TrainConfig
 from training.trainer import Trainer
 
-def set_seed(seed):
-    """
-    设置全局随机种子，确保实验的可复现性。
-    包括 Python random, NumPy, 和 PyTorch (CPU & GPU)。
-    """
+def run_replicate(agent_id, base_seed):
+    """单副本训练进程函数"""
+    # 为每个进程设置唯一的种子
+    seed = base_seed + agent_id
+    
+    # 重新初始化种子（在多进程环境下非常重要）
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-        # 为了保证绝对的一致性，禁用 CUDNN 的 benchmark 模式
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-    print(f"[Info] Random Seed set to: {seed}")
-
-def parse_args():
-    """解析命令行参数"""
-    parser = argparse.ArgumentParser(description="Deep RL for Scaffolding Cooperation")
     
-    # 基础参数
-    parser.add_argument("--seed", type=int, default=42, 
-                        help="Random seed for initialization (default: 42)")
-    parser.add_argument("--device", type=str, default=None, 
-                        help="Compute device to use (cpu or cuda)")
-    
-    # 训练参数覆盖 (覆盖 config.py 中的默认值)
-    parser.add_argument("--episodes", type=int, default=None, 
-                        help="Override total number of training episodes")
-    parser.add_argument("--batch_size", type=int, default=None,
-                        help="Override batch size")
-    parser.add_argument("--lr", type=float, default=None, 
-                        help="Override learning rate")
-    
-    return parser.parse_args()
-
-def main():
-    # 1. 解析参数
-    args = parse_args()
-
-    # 2. 应用配置
-    set_seed(args.seed)
-    
-    if args.device:
-        TrainConfig.DEVICE = args.device
-    
-    if args.episodes:
-        TrainConfig.MAX_EPISODES = args.episodes
-        
-    if args.batch_size:
-        TrainConfig.BATCH_SIZE = args.batch_size
-        
-    if args.lr:
-        TrainConfig.LR = args.lr
-
-    # 3. 打印实验环境信息
-    print("\n" + "="*50)
-    print(f"   AI Social Planner - Scaffolding Cooperation")
-    print("="*50)
-    print(f"Device       : {TrainConfig.DEVICE}")
-    print(f"Seed         : {args.seed}")
-    print(f"Max Episodes : {TrainConfig.MAX_EPISODES}")
-    print(f"Batch Size   : {TrainConfig.BATCH_SIZE}")
-    print(f"Learning Rate: {TrainConfig.LR}")
-    print("-" * 50)
-
-    # 4. 初始化训练器
-    try:
-        trainer = Trainer()
-    except Exception as e:
-        print(f"\n[Error] Failed to initialize Trainer: {e}")
-        import traceback
-        traceback.print_exc()
-        return
-
-    # 5. 开始训练
-    start_time = time.time()
-    print(f"Training started at {time.strftime('%X')}...")
-    print("-" * 50)
-
+    # 初始化训练器并开始
+    trainer = Trainer(agent_id=agent_id, seed=seed)
     try:
         trainer.train()
-    except KeyboardInterrupt:
-        print("\n\n[Warning] Training interrupted by user (Ctrl+C).")
-        # 这里可以选择保存紧急 Checkpoint，但 Trainer 已经有定期保存机制
     except Exception as e:
-        print(f"\n[Error] An error occurred during training: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        # 6. 结束统计
-        end_time = time.time()
-        duration = end_time - start_time
-        hours = int(duration // 3600)
-        minutes = int((duration % 3600) // 60)
-        seconds = int(duration % 60)
-        
-        print("="*50)
-        print(f"Training Process Finished.")
-        print(f"Total Time: {hours}h {minutes}m {seconds}s")
-        print(f"Checkpoints location: ./checkpoints/")
-        print("="*50)
+        print(f"Error in replicate {agent_id}: {e}")
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--replicates", type=int, default=30, help="要训练的独立副本数量")
+    parser.add_argument("--parallel", type=int, default=1, help="同时并行的任务数(取决于你的GPU/显存)")
+    args = parser.parse_args()
+
+    print(f"Preparing to train {args.replicates} replicates...")
+
+    # 如果 parallel=1, 则顺序执行；如果 >1, 使用进程池
+    if args.parallel > 1:
+        # 使用多进程池并行执行
+        # 注意：如果你的 Agent 运行在 GPU 上，设置 parallel 过高会导致 OOM (显存溢出)
+        # 建议 parallel 数 = 显存 / (单个Agent占用显存)
+        ctx = mp.get_context('spawn') # GPU 任务推荐使用 spawn
+        with ctx.Pool(args.parallel) as pool:
+            pool.starmap(run_replicate, [(i, args.seed) for i in range(args.replicates)])
+    else:
+        # 顺序执行（适合显存不足的情况）
+        for i in range(args.replicates):
+            run_replicate(i, args.seed)
 
 if __name__ == "__main__":
+    # 设置多进程启动方法
+    mp.set_start_method('spawn', force=True)
     main()
