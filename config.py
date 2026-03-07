@@ -22,7 +22,7 @@ class BotConfig:
     MEAN_FRAC_COOP = 0.55
     STD_FRAC_COOP = 0.32
 
- 
+
     BETA_PRIME_0 = 1.807  
     BETA_PRIME_1 = 0.818  
 
@@ -56,5 +56,5 @@ class TrainConfig:
     ENTROPY_COEF = 0.004
     VALUE_LOSS_COEF = 0.5
     MAX_EPISODES = 400000 
-    LOG_INTERVAL = 10
+    LOG_INTERVAL = 1000
     DEVICE = "cuda"

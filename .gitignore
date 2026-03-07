@@ -15,3 +15,10 @@ venv/
 # 忽略日志文件
 logs/
 *.log
+
+
+
+*.pyc
+.DS_Store
+.venv/
+venv/
