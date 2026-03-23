@@ -2,10 +2,10 @@
 import torch
 import torch.nn as nn
 from model.graph_net import StandardGraphNetBlock, ModifiedGraphNetBlock
-from config import ModelConfig, GameConfig
+from config import ModelConfig, GameConfig, MODE
 from utils.init_weights import init_weights
 
-class SocialPlannerAgent(nn.Module):
+class SocialPlannerAgent_v1(nn.Module):
     def __init__(self):
         super().__init__()
         
@@ -70,3 +70,60 @@ class SocialPlannerAgent(nn.Module):
         _, edge_logits, state_value = self.block2(v_prime, e_prime, u_prime, mask)
         
         return edge_logits, state_value
+    
+
+class SocialPlannerAgent_v2(nn.Module):
+    def __init__(self):
+        super().__init__()
+        
+        h_dim = ModelConfig.HIDDEN_DIM # Usually 128
+        
+        # --- Block 1 (Standard) ---
+        # 注意这里的改动：edge_dim 强制设为 2，以接收 V2 环境的丰富特征
+        self.block1 = StandardGraphNetBlock(
+            node_dim=ModelConfig.NODE_IN_DIM,   # 2
+            edge_dim=2,                         # 【修改】V2边特征维数变为 2: [Adj, Edge_Games]
+            global_dim=ModelConfig.GLOBAL_IN_DIM, # 1
+            hidden_dim=h_dim
+        )
+        
+        # --- Block 2 (Modified) ---
+        self.block2 = ModifiedGraphNetBlock(
+            input_dim=h_dim,
+            hidden_dim=h_dim,
+            action_dim=2  # 输出 Policy Logits：[0: 建议低风险, 1: 建议高风险]
+        )
+        
+        self.apply(init_weights)
+
+    def forward(self, capital, prev_decisions, edge_features, time_step):
+        """
+        注意：V2 接收的是 edge_features 而不再是 adj_matrix
+        edge_features 形状已经是 (B, N, N, 2)
+        """
+        B, N = capital.shape
+        device = capital.device
+        
+        # 1. Feature Construction (G = u, V, E)
+        v = torch.stack([capital.float(), prev_decisions.float()], dim=-1) # (B, N, 2)
+        
+        # 【修改】直接使用传入的 edge_features，无需再 unsqueeze
+        e = edge_features.float() # (B, N, N, 2)
+        
+        # 归一化时间步
+        norm_time = float(time_step) / float(GameConfig.EPISODE_LENGTH)
+        u = torch.full((B, 1), norm_time, device=device, dtype=torch.float32)
+        
+        # Mask (去对角线)
+        mask = 1.0 - torch.eye(N, device=device).unsqueeze(0)
+        
+        # 2. Message Passing
+        v_prime, e_prime, u_prime = self.block1(v, e, u, mask)
+        _, edge_logits, state_value = self.block2(v_prime, e_prime, u_prime, mask)
+        
+        return edge_logits, state_value
+
+
+
+
+SocialPlannerAgent = SocialPlannerAgent_v1 if MODE == 0 else SocialPlannerAgent_v2

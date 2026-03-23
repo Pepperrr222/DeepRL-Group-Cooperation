@@ -1,4 +1,8 @@
-class GameConfig:
+MODE = 1
+
+
+
+class GameConfig_v1:
     N_PLAYERS = 16
     EPISODE_LENGTH = 15
     ERDOS_RENYI_P = 0.3
@@ -6,6 +10,27 @@ class GameConfig:
     BENEFIT_B = 0.1
     COST_C = 0.05
     PENALTY_WEIGHT_P = 1.0 
+
+class GameConfig_v2:
+    N_PLAYERS = 16
+    EPISODE_LENGTH = 15
+    ERDOS_RENYI_P = 0.3
+    INITIAL_CAPITAL = 5.0
+    BENEFIT_B = 0.1
+    COST_C = 0.05
+    PENALTY_WEIGHT_P = 1.0 
+    LOW_RISK_MATRIX = [
+        [0.0, 1.0],  # 我背叛：(对手背叛得0，对手合作我得2)
+        [-0.5, 0.05]  # 我合作：(对手背叛我亏1，对手合作我得1)
+    ]
+    
+    HIGH_RISK_MATRIX = [
+        [0.0, 5.0],  # 我背叛：(对手背叛得0，对手合作我得5)
+        [-4.0, 3.0]  # 我合作：(对手背叛我亏4，对手合作我得3)
+    ]
+
+
+
 
 class BotConfig:
     # 模拟人类参数
@@ -46,7 +71,7 @@ class BotConfig:
 class ModelConfig:
     HIDDEN_DIM = 128
     NODE_IN_DIM = 2
-    EDGE_IN_DIM = 1
+    EDGE_IN_DIM = 1 if MODE == 0 else 2
     GLOBAL_IN_DIM = 1
     
 class TrainConfig:
@@ -58,3 +83,12 @@ class TrainConfig:
     MAX_EPISODES = 400000 
     LOG_INTERVAL = 1000
     DEVICE = "cuda"
+
+
+
+if MODE == 0:
+    GameConfig = GameConfig_v1
+elif MODE == 1:
+    GameConfig = GameConfig_v2
+else:
+    raise ValueError(f"未知的运行模式: {MODE}")
