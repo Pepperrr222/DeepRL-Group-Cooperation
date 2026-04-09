@@ -14,7 +14,7 @@ except ImportError as e:
 # 背景里画多少条细线 (模拟单局)
 N_BACKGROUND_TRACES = 15 
 # 均值线用多少局数据来计算 (越多越平滑准确)
-N_MEAN_CALCULATION = 15
+N_MEAN_CALCULATION = 100000
 
 ROUNDS = np.arange(1, GameConfig.EPISODE_LENGTH + 1)
 

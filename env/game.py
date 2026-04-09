@@ -107,6 +107,8 @@ class PublicGoodsGame_v1:
         return self.capital, self.prev_decisions, self.adj
     
 
+
+# ==========================================
 class PublicGoodsGame_v2:
     def __init__(self, batch_size, device):
         self.bs = batch_size

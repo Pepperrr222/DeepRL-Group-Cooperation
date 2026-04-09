@@ -1,137 +1,139 @@
 # env/llm_bots.py
 import torch
 import re
-import concurrent.futures
-from config import GameConfig
-# 假设你使用 openai 库，也可以换成 requests 调用其它 API
-from openai import OpenAI 
+from concurrent.futures import ThreadPoolExecutor
+from openai import OpenAI
+from config import BotConfig, GameConfig
 
 class LLMBots:
-    def __init__(self, batch_size, device, api_key, base_url=None, model="gpt-4o-mini"):
-        """
-        注意：LLM 评估时，强烈建议 batch_size 只能设为 1，否则 API 并发量太大
-        """
-        assert batch_size == 1, "LLM bots only support batch_size=1 for evaluation."
+    def __init__(self, batch_size, device, model_name="gpt-3.5-turbo"):
         self.bs = batch_size
         self.device = device
         self.n_players = GameConfig.N_PLAYERS
-        self.model = model
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.model_name = model_name
         
-        # 给每个玩家分配一个固定的人设（可选），或者统一设定为自利者
-        self.system_prompt = (
-            "You are a human participant in a public goods game played on a social network. "
-            "Your goal is to maximize your own virtual money (capital). "
-            "Think logically based on the actions of your neighbors."
+        # 初始化客户端 (请确保已设置环境变量 OPENAI_API_KEY)
+        # 如果使用其他模型，可以在这里修改 base_url
+        self.client = OpenAI() 
+        
+        # 依然保留个体性格 theta，作为 Prompt 的输入之一
+        self.theta = torch.normal(
+            BotConfig.MU_THETA, 
+            BotConfig.SIGMA_THETA, 
+            size=(self.bs, self.n_players), 
+            device=self.device
         )
 
-    def _call_llm(self, prompt):
-        """调用 LLM API，获取文本回答"""
+    def _call_llm(self, prompt, fallback=0):
+        """调用 LLM 并解析返回的 0 或 1"""
         try:
             response = self.client.chat.completions.create(
-                model=self.model,
+                model=self.model_name,
                 messages=[
-                    {"role": "system", "content": self.system_prompt},
+                    {"role": "system", "content": "You are a participant in a sociological game. You must reply with exactly one digit: 1 or 0. No other text."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.3, # 稍微降低随机性，保持逻辑一致
-                max_tokens=10 # 只需要回复单个词
+                temperature=0.3, # 低温度保证输出稳定
+                max_tokens=5
             )
-            return response.choices[0].message.content.strip().lower()
+            reply = response.choices[0].message.content.strip()
+            
+            # 使用正则提取第一个出现的 0 或 1
+            match = re.search(r'[01]', reply)
+            if match:
+                return float(match.group(0))
+            return float(fallback)
         except Exception as e:
-            print(f"API Error: {e}")
-            return ""
+            print(f"[LLM Error] API request failed: {e}. Using fallback {fallback}.")
+            return float(fallback)
 
     def decide_cooperation(self, round_num, adj_matrix, prev_decisions, current_capital):
-        # 降维取出 batch=0 的数据
-        adj = adj_matrix[0] 
-        prev = prev_decisions[0]
-        cap = current_capital[0]
+        """1. 合作决策"""
+        x_s = adj_matrix.sum(dim=2) # 邻居总数
+        prev_decisions_exp = prev_decisions.unsqueeze(1).expand(-1, self.n_players, -1)
+        x_n = (adj_matrix * prev_decisions_exp).sum(dim=2) # 合作的邻居数
         
-        degrees = adj.sum(dim=1)
-        coop_neighbors = (adj * prev).sum(dim=1)
-        
+        x_r = torch.zeros_like(x_s)
+        mask_degree = x_s > 0
+        x_r[mask_degree] = x_n[mask_degree] / x_s[mask_degree] # 合作率
+
+        initial_decisions = torch.zeros((self.bs, self.n_players), device=self.device)
         prompts =[]
-        for i in range(self.n_players):
-            deg = int(degrees[i].item())
-            cost = GameConfig.COST_C * deg
-            my_cap = cap[i].item()
-            
-            # 破产保护：如果钱不够，LLM 连选的资格都没有，直接跳过生成 Prompt
-            if my_cap < cost:
-                prompts.append(None)
-                continue
+
+        # 构造 Prompts
+        for b in range(self.bs):
+            for i in range(self.n_players):
+                t = self.theta[b, i].item()
+                total_neighbors = int(x_s[b, i].item())
+                coop_neighbors = int(x_n[b, i].item())
+                coop_rate = x_r[b, i].item()
                 
-            coop_n = int(coop_neighbors[i].item())
-            
-            prompt = (
-                f"Round {round_num + 1}.\n"
-                f"You currently have ${my_cap:.2f}.\n"
-                f"You have {deg} connected neighbors. Last round, {coop_n} of them chose to Cooperate.\n"
-                f"If you Cooperate, you pay ${cost:.2f}, and each neighbor gets ${GameConfig.BENEFIT_B:.2f}.\n"
-                f"If you Defect, you pay $0, but you still receive money if neighbors cooperate.\n"
-                f"Will you 'Cooperate' or 'Defect'? Reply ONLY with one word."
-            )
-            prompts.append(prompt)
-
-        # 使用多线程并行请求 API，否则 16 个人串行会等很久
-        decisions = torch.zeros(self.n_players, device=self.device)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
-            # 提交任务
-            future_to_player = {
-                executor.submit(self._call_llm, p): i 
-                for i, p in enumerate(prompts) if p is not None
-            }
-            
-            # 收集结果
-            for future in concurrent.futures.as_completed(future_to_player):
-                i = future_to_player[future]
-                reply = future.result()
-                if "cooperate" in reply:
-                    decisions[i] = 1.0
-                elif "defect" in reply:
-                    decisions[i] = 0.0
+                if round_num == 0:
+                    prompt = (f"This is round 1. You have no history yet. "
+                              f"Your personality score is {t:.2f} (higher means more cooperative). "
+                              f"Do you choose to cooperate (1) or defect (0)?")
                 else:
-                    # 如果 LLM 胡言乱语，默认背叛
-                    decisions[i] = 0.0
+                    prompt = (f"Your personality score is {t:.2f} (higher means more cooperative). "
+                              f"Last round, you had {total_neighbors} connected neighbors, "
+                              f"and {coop_neighbors} of them cooperated (cooperation rate: {coop_rate:.0%}). "
+                              f"Based on this, do you choose to cooperate (1) or defect (0) this round?")
+                prompts.append(prompt)
 
-        return decisions.unsqueeze(0) # 重新加上 batch 维度 (1, N)
+        # 多线程并发请求 LLM
+        with ThreadPoolExecutor(max_workers=16) as executor:
+            results = list(executor.map(lambda p: self._call_llm(p, fallback=0), prompts))
+
+        # 将结果填入 Tensor
+        idx = 0
+        for b in range(self.bs):
+            for i in range(self.n_players):
+                initial_decisions[b, i] = results[idx]
+                idx += 1
+
+        # 依然保留资金不足强制背叛的物理规则 (Bankruptcy Protection)
+        potential_cost = GameConfig.COST_C * x_s
+        cannot_afford_mask = current_capital < potential_cost
+        
+        final_decisions = initial_decisions.clone()
+        final_decisions[cannot_afford_mask] = 0.0
+        
+        return final_decisions
 
     def decide_acceptance(self, recommendations, prev_decisions):
-        rec = recommendations[0]
-        prev = prev_decisions[0]
+        """2. 接受/拒绝边建议决策"""
+        B, N, _ = recommendations.shape
+        accept_decisions = torch.zeros_like(recommendations, dtype=torch.float)
         
-        accept_mask = torch.zeros_like(rec)
-        prompts_info =[]
+        partner_prev = prev_decisions.unsqueeze(1).expand(-1, N, -1)
+        
+        prompts = []
+        indices =[] # 记录需要请求LLM的索引位置 (b, i, j)
 
-        # 遍历上三角，寻找被推荐的边
-        for i in range(self.n_players):
-            for j in range(i + 1, self.n_players):
-                if rec[i, j] != 0:
-                    action_type = "CONNECT TO" if rec[i, j] == 1 else "DISCONNECT FROM"
-                    # 这里为了简化，我们让节点 i 做决定，或者询问双方。
-                    # 论文中是：assigned randomly to one of the two players。这里固定指派给 i 决定。
-                    partner_action = "Cooperated" if prev[j] == 1 else "Defected"
-                    
-                    prompt = (
-                        f"The Social Planner recommends you to {action_type} Player {j}.\n"
-                        f"Last round, Player {j} {partner_action}.\n"
-                        f"Will you 'Accept' or 'Reject' this recommendation? Reply ONLY with one word."
-                    )
-                    prompts_info.append((i, j, prompt))
+        # 遍历寻找所有 Agent 提出的建议
+        for b in range(B):
+            for i in range(N):
+                for j in range(i+1, N): # 无向图，只看上三角
+                    rec = recommendations[b, i, j].item()
+                    if rec != 0: # Agent 有建议 (-1 或 1)
+                        action_str = "create a new connection with" if rec == 1 else "cut the existing connection with"
+                        partner_action = "cooperated" if partner_prev[b, i, j].item() == 1 else "defected"
+                        
+                        prompt = (f"The social planner recommends that you {action_str} Player {j}. "
+                                  f"Last round, Player {j} {partner_action}. "
+                                  f"Do you accept (1) or reject (0) this recommendation?")
+                        
+                        prompts.append(prompt)
+                        indices.append((b, i, j))
 
         # 并发请求
-        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
-            future_to_edge = {
-                executor.submit(self._call_llm, p): (i, j) 
-                for i, j, p in prompts_info
-            }
-            
-            for future in concurrent.futures.as_completed(future_to_edge):
-                i, j = future_to_edge[future]
-                reply = future.result()
-                if "accept" in reply:
-                    accept_mask[i, j] = 1.0
-                    accept_mask[j, i] = 1.0 # 保持对称
+        if prompts:
+            with ThreadPoolExecutor(max_workers=16) as executor:
+                results = list(executor.map(lambda p: self._call_llm(p, fallback=1), prompts))
+                
+            # 填回 Tensor (并且保持对称性)
+            for k, (b, i, j) in enumerate(indices):
+                ans = results[k]
+                accept_decisions[b, i, j] = ans
+                accept_decisions[b, j, i] = ans # 双方同时决定，简化为一侧决定即代表该边
 
-        return accept_mask.unsqueeze(0)
+        return accept_decisions

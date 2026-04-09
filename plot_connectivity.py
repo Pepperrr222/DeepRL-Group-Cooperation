@@ -17,7 +17,7 @@ except ImportError as e:
 
 # ================= 配置 =================
 N_TRACES = 15        # 背景细线数量 (单局)
-N_MEAN_GAMES = 10  # 均值计算局数 (大批量并行)
+N_MEAN_GAMES = 10000  # 均值计算局数 (大批量并行)
 ROUNDS = np.arange(1, GameConfig.EPISODE_LENGTH + 1)
 MAX_EDGES = GameConfig.N_PLAYERS * (GameConfig.N_PLAYERS - 1) / 2
 

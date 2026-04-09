@@ -35,7 +35,7 @@ def get_planner(strategy, device):
         return GraphNetPlanner("checkpoints/final_model.pth", device)
     raise ValueError(f"Unknown strategy: {strategy}")
 
-def run_simulation(strategy, total_games=100000, batch_size=2000):
+def run_simulation(strategy, total_games=1000000, batch_size=2000):
     """
     运行大规模基准测试并返回统计数据。
     

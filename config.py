@@ -1,7 +1,6 @@
 MODE = 1
 
 
-
 class GameConfig_v1:
     N_PLAYERS = 16
     EPISODE_LENGTH = 15
@@ -20,13 +19,13 @@ class GameConfig_v2:
     COST_C = 0.05
     PENALTY_WEIGHT_P = 1.0 
     LOW_RISK_MATRIX = [
-        [0.0, 1.0],  # 我背叛：(对手背叛得0，对手合作我得2)
-        [-0.5, 0.05]  # 我合作：(对手背叛我亏1，对手合作我得1)
+        [0.0, 0.1],  
+        [-0.05, 0.05]  
     ]
     
     HIGH_RISK_MATRIX = [
-        [0.0, 5.0],  # 我背叛：(对手背叛得0，对手合作我得5)
-        [-4.0, 3.0]  # 我合作：(对手背叛我亏4，对手合作我得3)
+        [0.0, 0.2],  
+        [-0.1, 0.1]  
     ]
 
 
@@ -34,7 +33,6 @@ class GameConfig_v2:
 
 class BotConfig:
     # 模拟人类参数
-
     
     MU_THETA = -0.304
     SIGMA_THETA = 2.410
