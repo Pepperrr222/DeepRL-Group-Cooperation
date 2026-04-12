@@ -28,7 +28,7 @@ def batch_gini(capital_matrix):
     gini_per_game = torch.where(denominator == 0, torch.zeros_like(numerator), numerator / denominator)
     return gini_per_game.mean().item()
 
-def run_average_simulation(n_games=100, strategy_name="static"):
+def run_average_simulation(n_games=1000000, strategy_name="static"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     print(f"\n" + "="*85)

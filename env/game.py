@@ -149,44 +149,28 @@ class PublicGoodsGame_v2:
     def step(self, action_logits):
         self.current_round += 1
         
-        # 获取真实存在的边，作为有效建议的 Mask
+        # 1. 提取有效边掩码 (上三角真实存在的边)
         valid_edges_mask = torch.triu(self.adj, 1) 
         
-        # 1. Agent 建议 (Logits -> 0 或 1)
-        # 0: 建议该边玩低风险; 1: 建议该边玩高风险
+        # 2. Agent 直接输出建议的风险等级 (0: 低风险, 1: 高风险)
         probs_high_risk = torch.softmax(action_logits, dim=-1)[..., 1]
         dist = torch.distributions.Bernoulli(probs_high_risk)
         recommended_games = dist.sample() * valid_edges_mask
         
-        # 2. 翻译建议语义 (适配原版人类的接受概率表)
-        # 升级到高风险(1) -> 类似 Add (+1)
-        # 降级到低风险(0) -> 类似 Delete (-1)
-        rec_type = torch.zeros_like(self.edge_games)
+        # ==========================================
+        # 核心修改 1：强制采纳逻辑 (跳过 Bot 的 decide_acceptance)
+        # ==========================================
+        # 找出 Agent 想要改变的边 (建议的规则与当前规则不同)
+        final_change_mask = (recommended_games != self.edge_games) & (valid_edges_mask == 1)
         
-        # 想要升级：当前是0，建议是1
-        upgrade_mask = (self.edge_games == 0) & (recommended_games == 1) & (valid_edges_mask == 1)
-        rec_type[upgrade_mask] = 1.0
-        
-        # 想要降级：当前是1，建议是0
-        downgrade_mask = (self.edge_games == 1) & (recommended_games == 0) & (valid_edges_mask == 1)
-        rec_type[downgrade_mask] = -1.0
-        
-        # 保持对称
-        rec_type = rec_type + rec_type.transpose(1, 2)
-        
-        # 3. Bot 根据语义 (-1/0/1) 和 对方上轮表现决定是否接受
-        accepted_mask = self.bots.decide_acceptance(rec_type, self.prev_decisions)
-        
-        # 4. 应用游戏规则更新
-        # 只有提出改变建议，且Bot接受了，才真正改变 edge_games
-        final_change_mask = (accepted_mask == 1) & (rec_type != 0)
-        
+        # 直接覆盖旧规则 (强制执行)
         new_edge_games = self.edge_games.clone()
         new_edge_games[final_change_mask.bool()] = recommended_games[final_change_mask.bool()]
+        
         # 保持无向图的规则对称
         self.edge_games = torch.triu(new_edge_games, 1) + torch.triu(new_edge_games, 1).transpose(1, 2)
         
-        # 5. 玩家在新规则下进行博弈决策
+        # 3. 玩家在新规则下进行博弈决策
         coop_decisions = self.bots.decide_cooperation(
             self.current_round, 
             self.adj, 
@@ -198,19 +182,20 @@ class PublicGoodsGame_v2:
         self._apply_payoffs(coop_decisions)
         self.prev_decisions = coop_decisions
 
-        # 6. 奖励计算 (群体资金 - 修改规则带来的摩擦成本)
+        # ==========================================
+        # 核心修改 2：原始的惩罚与奖励逻辑 (删去了 coop_rate 奖励)
+        # ==========================================
         group_welfare = self.capital.mean(dim=1)
         
-        # 注意：V2中，由于拓扑固定，惩罚的基数变成"有效边"的数量，而不是理论最大边数
+        # 惩罚：Agent 本轮修改了多少条边的规则 (摩擦成本)
         num_changes = final_change_mask.sum(dim=(1, 2))
-        num_valid_edges = valid_edges_mask.sum(dim=(1, 2)) * 2 # 乘以2是因为上面求和是对全图求的，或者直接对上三角求和
+        num_valid_edges = valid_edges_mask.sum(dim=(1, 2)) + 1e-8
+        penalty = GameConfig.PENALTY_WEIGHT_P * (num_changes / num_valid_edges)
         
-        # 为防止全零网络导致的除零错误，加上 epsilon (1e-8)
-        penalty = GameConfig.PENALTY_WEIGHT_P * (num_changes / (num_valid_edges + 1e-8))
-        
+        # 恢复原版：纯粹的 [群体平均资金 - 摩擦惩罚]
         reward = group_welfare - penalty
         
-        # 返回 dist 和 recommended_games 供 trainer 计算 A2C
+        # 返回 dist 和 recommended_games 供 trainer 计算 A2C (LogProb & Entropy)
         return self._get_state(), reward, dist, recommended_games
 
     def _apply_payoffs(self, coop_decisions):
