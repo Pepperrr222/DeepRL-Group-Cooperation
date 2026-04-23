@@ -1,5 +1,6 @@
 # env/game.py
 import torch
+import networkx as nx
 from config import GameConfig, MODE
 from env.bots import SimulatedBots
 
@@ -109,6 +110,8 @@ class PublicGoodsGame_v1:
 
 
 # ==========================================
+# 版本 2: 机制设计版本 (RRG图 + 严谨接受逻辑 + 原版Reward)
+# ==========================================
 class PublicGoodsGame_v2:
     def __init__(self, batch_size, device):
         self.bs = batch_size
@@ -117,28 +120,36 @@ class PublicGoodsGame_v2:
         self.bots = SimulatedBots(batch_size, device)
         self.current_round = 0
         
+        # --- 性能优化：预生成 Random Regular Graphs (RRG) 池 ---
+        self.pool_size = 100
+        self.rrg_pool = torch.zeros(self.pool_size, self.n, self.n, device=self.device)
+        # degree 根据 config 动态获取，默认为 4
+        degree = int(getattr(GameConfig, 'TARGET_AVG_DEGREE', 4))
+        for i in range(self.pool_size):
+            G = nx.random_regular_graph(d=degree, n=self.n)
+            self.rrg_pool[i] = torch.tensor(nx.to_numpy_array(G), dtype=torch.float, device=self.device)
+
     def reset(self):
         self.current_round = 0
         
-        # 1. 初始图生成 (此后在 V2 中 adj 永远不变)
-        rand = torch.rand(self.bs, self.n, self.n, device=self.device)
-        adj = (rand < GameConfig.ERDOS_RENYI_P).float()
+        # 1. 初始图生成 (从 RRG 池中随机采样)
+        idx = torch.randint(0, self.pool_size, (self.bs,), device=self.device)
+        adj = self.rrg_pool[idx]
         self.adj = torch.triu(adj, 1) + torch.triu(adj, 1).transpose(1, 2)
         
         # 2. 初始博弈规则矩阵 (0: 低风险, 1: 高风险)
-        # 初始化所有边均为低风险
         self.edge_games = torch.zeros_like(self.adj)
         
         self.capital = torch.ones(self.bs, self.n, device=self.device) * GameConfig.INITIAL_CAPITAL
         self.prev_decisions = torch.zeros(self.bs, self.n, device=self.device)
 
-        # 3. Round 1 预热 (注意：额外传入了 edge_games)
+        # 3. Round 1 预热
         coop_decisions = self.bots.decide_cooperation(
             self.current_round, 
             self.adj, 
             self.prev_decisions,
             self.capital,
-            self.edge_games  # V2 新增参数，用于破产计算
+            self.edge_games
         )
         
         self._apply_payoffs(coop_decisions)
@@ -152,25 +163,45 @@ class PublicGoodsGame_v2:
         # 1. 提取有效边掩码 (上三角真实存在的边)
         valid_edges_mask = torch.triu(self.adj, 1) 
         
-        # 2. Agent 直接输出建议的风险等级 (0: 低风险, 1: 高风险)
+        # 2. Agent 输出建议的风险等级 (0: 低风险, 1: 高风险)
         probs_high_risk = torch.softmax(action_logits, dim=-1)[..., 1]
         dist = torch.distributions.Bernoulli(probs_high_risk)
         recommended_games = dist.sample() * valid_edges_mask
         
-        # ==========================================
-        # 核心修改 1：强制采纳逻辑 (跳过 Bot 的 decide_acceptance)
-        # ==========================================
-        # 找出 Agent 想要改变的边 (建议的规则与当前规则不同)
-        final_change_mask = (recommended_games != self.edge_games) & (valid_edges_mask == 1)
+        # 3. 将 0/1 建议翻译为 -1(降级), 0(不变), 1(升级)，对应 a_SP
+        rec_type = torch.zeros_like(self.edge_games)
         
-        # 直接覆盖旧规则 (强制执行)
+        # 想要升级：当前是0，建议是1
+        upgrade_mask = (self.edge_games == 0) & (recommended_games == 1) & (valid_edges_mask == 1)
+        rec_type[upgrade_mask] = 1.0
+        
+        # 想要降级：当前是1，建议是0
+        downgrade_mask = (self.edge_games == 1) & (recommended_games == 0) & (valid_edges_mask == 1)
+        rec_type[downgrade_mask] = -1.0
+        
+        # 对称化，使得 a_SP(i,j) = a_SP(j,i)
+        rec_type = rec_type + rec_type.transpose(1, 2)
+        
+        # ==========================================
+        # 核心修改 1：严格的接受逻辑 (基于要求：双方都接受才更改)
+        # ==========================================
+        # accept_i[b, i, j] 代表玩家 i 是否接受了对边 (i,j) 的建议
+        accept_i = self.bots.decide_acceptance(rec_type, self.prev_decisions)
+        # accept_j[b, i, j] 代表玩家 j 是否接受了对边 (i,j) 的建议
+        accept_j = accept_i.transpose(1, 2)
+        
+        # 只有边两边的玩家都接受更改，才会更改边上的博弈
+        both_accept = (accept_i == 1) & (accept_j == 1)
+        
+        # 最终改变：Agent提了建议 (rec_type != 0) 且 双方都接受 (both_accept)
+        final_change_mask = (rec_type != 0) & both_accept & (valid_edges_mask == 1)
+        
+        # 更新规则
         new_edge_games = self.edge_games.clone()
         new_edge_games[final_change_mask.bool()] = recommended_games[final_change_mask.bool()]
-        
-        # 保持无向图的规则对称
         self.edge_games = torch.triu(new_edge_games, 1) + torch.triu(new_edge_games, 1).transpose(1, 2)
         
-        # 3. 玩家在新规则下进行博弈决策
+        # 4. 玩家在新规则下进行博弈决策
         coop_decisions = self.bots.decide_cooperation(
             self.current_round, 
             self.adj, 
@@ -183,45 +214,44 @@ class PublicGoodsGame_v2:
         self.prev_decisions = coop_decisions
 
         # ==========================================
-        # 核心修改 2：原始的惩罚与奖励逻辑 (删去了 coop_rate 奖励)
+        # 核心修改 2：严格的惩罚函数 (公式 3 & 4)
         # ==========================================
         group_welfare = self.capital.mean(dim=1)
         
-        # 惩罚：Agent 本轮修改了多少条边的规则 (摩擦成本)
-        num_changes = final_change_mask.sum(dim=(1, 2))
-        num_valid_edges = valid_edges_mask.sum(dim=(1, 2)) + 1e-8
-        penalty = GameConfig.PENALTY_WEIGHT_P * (num_changes / num_valid_edges)
+        # 计算 f(a_SP, a^1, i, j) = 1 的数量：
+        # 条件：a_SP != 0 AND a^1_{i,j} == 0 AND a^1_{j,i} == 0
+        both_reject = (accept_i == 0) & (accept_j == 0)
+        penalty_mask = (rec_type != 0) & both_reject & (valid_edges_mask == 1)
         
-        # 恢复原版：纯粹的 [群体平均资金 - 摩擦惩罚]
+        # 论文中的 m 是网络中可能存在的边。因为拓扑固定，m 实际上就是真实连接的边数
+        num_penalties = penalty_mask.sum(dim=(1, 2))
+        num_valid_edges = valid_edges_mask.sum(dim=(1, 2)) + 1e-8
+        
+        # 惩罚 = P * (1/m * SUM(f))
+        penalty = GameConfig.PENALTY_WEIGHT_P * (num_penalties / num_valid_edges)
+        
+        # 恢复原版：纯粹的[群体平均资金 - 建议被双双拒绝的惩罚]
         reward = group_welfare - penalty
         
-        # 返回 dist 和 recommended_games 供 trainer 计算 A2C (LogProb & Entropy)
         return self._get_state(), reward, dist, recommended_games
 
     def _apply_payoffs(self, coop_decisions):
         """V2 的新型查表结算逻辑"""
         B, N = self.bs, self.n
         
-        # 构造动作网格 (B, N, N)
-        # my_acts[b, i, j] 代表在 batch b 中，玩家 i 的动作
         my_acts = coop_decisions.unsqueeze(2).expand(-1, -1, N).long()
-        # opp_acts[b, i, j] 代表在 batch b 中，玩家 j 的动作
         opp_acts = coop_decisions.unsqueeze(1).expand(-1, N, -1).long()
         
         payoff_low = torch.zeros(B, N, N, device=self.device)
         payoff_high = torch.zeros(B, N, N, device=self.device)
         
-        # 遍历 2x2 矩阵的可能性赋值 (纯向量化操作)
-        for i in [0, 1]:
+        for i in[0, 1]:
             for j in [0, 1]:
                 mask = (my_acts == i) & (opp_acts == j)
                 payoff_low[mask] = GameConfig.LOW_RISK_MATRIX[i][j]
                 payoff_high[mask] = GameConfig.HIGH_RISK_MATRIX[i][j]
                 
-        # 结合当前的 edge_games 状态 (1 为高风险，0 为低风险) 组合出最终的收益矩阵
         actual_payoff_matrix = payoff_high * self.edge_games + payoff_low * (1.0 - self.edge_games)
-        
-        # 只有存在连线 (adj=1) 的地方才进行结算
         node_payoffs = (actual_payoff_matrix * self.adj).sum(dim=2)
         
         self.capital += node_payoffs
@@ -234,5 +264,6 @@ class PublicGoodsGame_v2:
         """
         edge_features = torch.stack([self.adj, self.edge_games], dim=-1)
         return self.capital, self.prev_decisions, edge_features
+
 # 导出正确的环境类
 PublicGoodsGame = PublicGoodsGame_v1 if MODE == 0 else PublicGoodsGame_v2

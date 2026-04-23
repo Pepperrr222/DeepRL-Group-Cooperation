@@ -1,4 +1,6 @@
+# env/bots.py
 import torch
+import torch.nn.functional as F
 from config import BotConfig, GameConfig, MODE
 
 class SimulatedBots_v1:
@@ -27,8 +29,6 @@ class SimulatedBots_v1:
 
         # 2. 计算 Logits
         if round_num == 0:
-            # Round 1: 使用修正后的高截距
-            # 注意：Round 1 只有 theta 影响，或者你可以保留 beta_prime_1
             logits = BotConfig.BETA_PRIME_0 + BotConfig.BETA_PRIME_1 * self.theta
         else:
             # Round > 1: 标准化 + 修正后的系数
@@ -43,6 +43,8 @@ class SimulatedBots_v1:
                       self.theta)
         
         probs = torch.sigmoid(logits)
+        # 数值安全保护
+        probs = torch.clamp(probs, 0.0, 1.0)
         initial_decisions = torch.bernoulli(probs)
         
         # 3. 强制背叛 (资金不足)
@@ -66,6 +68,8 @@ class SimulatedBots_v1:
                 mask = (recommendations == rec_val) & (partner_prev == partner_act)
                 accept_probs[mask] = prob
         
+        # 数值安全保护
+        accept_probs = torch.clamp(accept_probs, 0.0, 1.0)
         return torch.bernoulli(accept_probs)
     
 class SimulatedBots_v2:
@@ -81,49 +85,60 @@ class SimulatedBots_v2:
             device=self.device
         )
 
-    def decide_cooperation(self, round_num, adj_matrix, prev_decisions, current_capital, edge_games):
+    def decide_cooperation(self, round_num, adj_matrix, prev_decisions, current_capital, edge_games, delta=BotConfig.DELTA):
         """
-        V2 版本的合作决策：需要多传入一个 edge_games 矩阵
+        V2 演化博弈版本：模仿邻居策略
         """
-        # 1. 计算原始特征
-        x_s = adj_matrix.sum(dim=2) # Degree
+        B, N = self.bs, self.n_players
         
-        prev_decisions_exp = prev_decisions.unsqueeze(1).expand(-1, self.n_players, -1)
-        x_n = (adj_matrix * prev_decisions_exp).sum(dim=2) # Num Coop Neighbors
-        
-        x_r = torch.zeros_like(x_s)
-        mask_degree = x_s > 0
-        x_r[mask_degree] = x_n[mask_degree] / x_s[mask_degree] # Rate
-
-        # 2. 计算 Logits (与 V1 保持一致的社会心理模型)
         if round_num == 0:
             logits = BotConfig.BETA_PRIME_0 + BotConfig.BETA_PRIME_1 * self.theta
+            probs = torch.sigmoid(logits)
+            probs = torch.clamp(probs, 0.0, 1.0) # 加上安全钳位
+            initial_decisions = torch.bernoulli(probs)
         else:
-            x_s_std = (x_s - BotConfig.MEAN_NEIGHBORS) / BotConfig.STD_NEIGHBORS
-            x_n_std = (x_n - BotConfig.MEAN_COOP_NEIGHBORS) / BotConfig.STD_COOP_NEIGHBORS
-            x_r_std = (x_r - BotConfig.MEAN_FRAC_COOP) / BotConfig.STD_FRAC_COOP
+            # 1. 计算上一轮的单步真实收益 u_j
+            my_acts = prev_decisions.unsqueeze(2).expand(-1, -1, N).long()
+            opp_acts = prev_decisions.unsqueeze(1).expand(-1, N, -1).long()
             
-            logits = (BotConfig.BETA_0 + 
-                      BotConfig.BETA_1 * x_s_std + 
-                      BotConfig.BETA_2 * x_n_std + 
-                      BotConfig.BETA_3 * x_r_std + 
-                      self.theta)
-        
-        probs = torch.sigmoid(logits)
-        initial_decisions = torch.bernoulli(probs)
-        
-        # 3. 强制背叛 (动态破产保护 - V2 核心逻辑)
-        # 取两种博弈中，我合作(1)对方背叛(0)情况下的绝对损失值
+            payoff_low = torch.zeros(B, N, N, device=self.device)
+            payoff_high = torch.zeros(B, N, N, device=self.device)
+            
+            for i in [0, 1]:
+                for j in [0, 1]:
+                    mask = (my_acts == i) & (opp_acts == j)
+                    payoff_low[mask] = GameConfig.LOW_RISK_MATRIX[i][j]
+                    payoff_high[mask] = GameConfig.HIGH_RISK_MATRIX[i][j]
+                    
+            actual_payoff_matrix = payoff_high * edge_games + payoff_low * (1.0 - edge_games)
+            u = (actual_payoff_matrix * adj_matrix).sum(dim=2) 
+            
+            # 2. 演化博弈：计算模仿概率 p_ij
+            A_prime = adj_matrix + torch.eye(N, device=self.device).unsqueeze(0)
+            u_j = u.unsqueeze(1).expand(-1, N, -1)
+            logits_imitation = u_j * delta
+            logits_imitation = torch.where(A_prime == 1, logits_imitation, torch.tensor(-1e9, device=self.device))
+            
+            p_ij = F.softmax(logits_imitation, dim=2)
+            
+            # 3. 采样新策略
+            prev_dec_j = prev_decisions.unsqueeze(1).expand(-1, N, -1) 
+            prob_coop = (p_ij * prev_dec_j).sum(dim=2) # (B, N)
+            
+            # ====================================================
+            # 核心修复处：数值安全保护 (防止浮点误差导致 p > 1)
+            # ====================================================
+            prob_coop = torch.clamp(prob_coop, 0.0, 1.0)
+            
+            initial_decisions = torch.bernoulli(prob_coop)
+
+        # 4. 强制背叛 (动态破产保护)
         worst_loss_low = abs(GameConfig.LOW_RISK_MATRIX[1][0])
         worst_loss_high = abs(GameConfig.HIGH_RISK_MATRIX[1][0])
         
-        # 构建当前每条边的潜在最大损失矩阵
         potential_loss_matrix = edge_games * worst_loss_high + (1.0 - edge_games) * worst_loss_low
-        
-        # 将邻接矩阵(adj_matrix)乘上去，只对真正连着的邻居计算损失，求和
         potential_cost = (potential_loss_matrix * adj_matrix).sum(dim=2)
         
-        # 判断资金是否足以覆盖最坏情况
         cannot_afford_mask = current_capital < potential_cost
         
         final_decisions = initial_decisions.clone()
@@ -132,21 +147,19 @@ class SimulatedBots_v2:
         return final_decisions
 
     def decide_acceptance(self, recommendations, prev_decisions):
-        """
-        接受建议概率：完美复用 V1。
-        在 game.py (v2) 中，Agent的升降级建议已经被翻译成 1(Add/Upgrade) 和 -1(Delete/Downgrade)
-        """
         B, N, _ = recommendations.shape
         accept_probs = torch.zeros_like(recommendations, dtype=torch.float)
         
         partner_prev = prev_decisions.unsqueeze(1).expand(-1, N, -1)
         
-        for rec_val in[-1, 1]:
+        for rec_val in [-1, 1]:
             for partner_act in [0, 1]:
                 prob = BotConfig.ACCEPT_PROBS[(rec_val, partner_act)]
                 mask = (recommendations == rec_val) & (partner_prev == partner_act)
                 accept_probs[mask] = prob
         
+        # 数值安全保护
+        accept_probs = torch.clamp(accept_probs, 0.0, 1.0)
         return torch.bernoulli(accept_probs)
     
 SimulatedBots = SimulatedBots_v1 if MODE == 0 else SimulatedBots_v2

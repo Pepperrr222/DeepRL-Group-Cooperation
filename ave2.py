@@ -32,7 +32,7 @@ def run_average_simulation(n_games=1000000, strategy_name="static"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     print(f"\n" + "="*85)
-    print(f"🚀 批量运行 {n_games} 局游戏 | 模式: {'V2 (规则设计)' if MODE==1 else 'V1 (拓扑干预)'} | 策略: {strategy_name.upper()}")
+    print(f"运行 {n_games} 局游戏 | 模式: {'V2 (规则设计)' if MODE==1 else 'V1 (拓扑干预)'} | 策略: {strategy_name.upper()}")
     print("="*85)
     
     # 1. 初始化并行环境
@@ -55,7 +55,7 @@ def run_average_simulation(n_games=1000000, strategy_name="static"):
         total_possible = GameConfig.N_PLAYERS * (GameConfig.N_PLAYERS - 1) / 2
         # 计算所有局的平均连接数
         avg_initial_conn = (adj.sum(dim=(1,2)) / 2).mean().item() / total_possible
-        print(f"📈 100局平均初始网络连接率: {avg_initial_conn:.2%}")
+        print(f"100局平均初始网络连接率: {avg_initial_conn:.2%}")
     
     # 表格头
     header = f"{'轮次':^4} | {'平均合作率':^10} | {'平均高风险边数(%)':^20} | {'平均资金':^10} | {'平均基尼系数':^10}"
@@ -120,7 +120,7 @@ def run_average_simulation(n_games=1000000, strategy_name="static"):
         print(f"{t+1:^6d} | {coop_rate:10.1%} | {risk_str:^22} | ${avg_cap:<9.2f} | {avg_gini:10.3f}")
 
     print("="*85)
-    print(f"🏁 综合总结 ({n_games} 局平均): 最终平均资金 ${final_avg_cap:.2f}, 最终合作率 {final_coop_rate:.1%}")
+    print(f"综合总结 ({n_games} 局平均): 最终平均资金 ${final_avg_cap:.2f}, 最终合作率 {final_coop_rate:.1%}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
