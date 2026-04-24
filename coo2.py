@@ -39,7 +39,7 @@ def run_batch_simulation(strategy_name, n_games=10000, device="cuda"):
 
     return coop_rates
 
-def plot_results(n_games=10000):
+def plot_results(n_games=1000):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[系统] 正在使用 {device} 运行 {n_games} 局平均测试...")
 
@@ -80,7 +80,7 @@ if __name__ == "__main__":
     # 如果 10000 局在你的显存中放不下，可以尝试 5000 或分批运行
     # 对于 N=20, 10000 局通常没问题；对于 N=100, 建议先试 1000
     try:
-        plot_results(n_games=10000)
+        plot_results(n_games=1000)
     except RuntimeError as e:
         if "out of memory" in str(e).lower():
             print("\n[错误] 显存不足，请调小 n_games 数值。")

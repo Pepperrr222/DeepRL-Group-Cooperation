@@ -29,7 +29,7 @@ class GameConfig_v2:
     COST_C = 0.05
 
     # 收益矩阵参数
-    C_HIGH = 0.3
+    C_HIGH = 0.1
     C_LOW = 0.1
     B_HIGH = 0.8
     B_LOW = 0.2

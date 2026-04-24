@@ -1,5 +1,6 @@
 # planners/baselines.py
 import torch
+import math
 from .base import BasePlanner, prob_to_logits
 from config import MODE
 
@@ -55,10 +56,38 @@ class StaticPlannerV2(BasePlanner):
         return logits
 
 class RandomPlannerV2(BasePlanner):
+    """
+    V2 随机规划师（严格修正版）：
+    以 30% 的概率建议“改变现状”（即翻转当前的风险规则）。
+    - 如果当前是低风险 (0)，30% 概率建议高风险 (1)，70% 建议保持低风险 (0)
+    - 如果当前是高风险 (1)，30% 概率建议低风险 (0)，70% 建议保持高风险 (1)
+    """
     def get_logits(self, capital, prev_decisions, edge_features, round_num):
-        p_high_risk = 0.3
-        logits = prob_to_logits(p_high_risk, edge_features.device)
-        return logits.view(1, 1, 1, 2).expand(edge_features.shape[0], edge_features.shape[1], edge_features.shape[2], -1)
+        # 获取当前真实的规则状态 (0=低风险, 1=高风险)
+        # Shape: (B, N, N)
+        current_games = edge_features[..., 1] 
+        
+        # log(0.3) 和 log(0.7)
+        log_change = math.log(0.3)
+        log_keep = math.log(0.7)
+        
+        # --- 使用 torch.where 完美替代布尔索引，彻底杜绝维度报错 ---
+        
+        # 对于 Index 0 (建议低风险) 的打分：
+        # 如果当前是低风险(0)，则建议 0 代表"保持" (log_keep)
+        # 如果当前是高风险(1)，则建议 0 代表"改变" (log_change)
+        logits_0 = torch.where(current_games == 0, log_keep, log_change)
+        
+        # 对于 Index 1 (建议高风险) 的打分：
+        # 如果当前是低风险(0)，则建议 1 代表"改变" (log_change)
+        # 如果当前是高风险(1)，则建议 1 代表"保持" (log_keep)
+        logits_1 = torch.where(current_games == 0, log_change, log_keep)
+        
+        # 将分离计算好的 logits 沿着最后一个维度拼接
+        # Shape 变为: (B, N, N, 2)
+        logits = torch.stack([logits_0, logits_1], dim=-1)
+        
+        return logits
 
 class MaxRiskPlannerV2(BasePlanner):
     """V2模式下的最大风险逻辑：所有边都玩高风险"""
@@ -84,7 +113,6 @@ class ReactivePlannerV2(BasePlanner):
         
         logits = torch.zeros(B, N, N, 2, device=prev_decisions.device)
         
-        # 【修改处】：
         # 如果 both_coop 为 True，低风险(0)打负分，高风险(1)打正分
         # 如果 both_coop 为 False，低风险(0)打正分，高风险(1)打负分
         logits[..., 0] = torch.where(both_coop, -10.0, 10.0) 
