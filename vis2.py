@@ -1,4 +1,4 @@
-# play_visual_v2.py
+# vis2.py
 import torch
 import os
 import shutil

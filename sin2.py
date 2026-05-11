@@ -1,4 +1,4 @@
-# single_game.py
+# sin2.py
 import torch
 import numpy as np
 from env.game import PublicGoodsGame
