@@ -41,7 +41,7 @@ def main():
     n_games = 1000
     
     # 实验范围
-    deltas = list(range(1, 11))
+    deltas = list(range(1, 11)) 
     c_highs = [round(x * 0.1, 1) for x in range(1, 9)] # 0.1 到 0.8
     
     base_dir = "test3lenth15"
@@ -49,7 +49,7 @@ def main():
         shutil.rmtree(base_dir)
     os.makedirs(base_dir)
 
-    print(f"🚀 开始自动化实验：共 {len(c_highs) * len(deltas)} 种组合...")
+    print(f"开始实验：共 {len(c_highs) * len(deltas)} 种组合...")
 
     for c_val in c_highs:
         # 1. 为每个 C_HIGH 创建文件夹

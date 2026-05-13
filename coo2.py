@@ -3,7 +3,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from env.game import PublicGoodsGame
-from config import GameConfig, MODE
+from config import GameConfig, MODE, BotConfig
 from planners.baselines import StaticPlanner, RandomPlanner, ReactivePlanner
 
 def run_batch_simulation(strategy_name, n_games=10000, device="cuda"):

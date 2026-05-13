@@ -14,7 +14,7 @@ class GameConfig_v2:
     # ==========================================
     # 1. 网络规模和连线概率
     # ==========================================
-    N_PLAYERS = 50  # <--- 修改为 20人规模
+    N_PLAYERS = 50 # <--- 修改为 20人规模
 
     # 目标平均度为 4
     TARGET_AVG_DEGREE = 4.0
@@ -24,7 +24,7 @@ class GameConfig_v2:
     ERDOS_RENYI_P = TARGET_AVG_DEGREE / (N_PLAYERS - 1)
     
     EPISODE_LENGTH = 15
-    INITIAL_CAPITAL = 1.0
+    INITIAL_CAPITAL = 10.0
     BENEFIT_B = 0.1
     COST_C = 0.05
 
