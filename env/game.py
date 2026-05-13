@@ -157,7 +157,7 @@ class PublicGoodsGame_v2:
         
         return self._get_state()
     delta = BotConfig.DELTA
-    def step(self, action_logits, delta):
+    def step(self, action_logits, delta = BotConfig.DELTA):
         self.current_round += 1
         
         # 1. 提取有效边掩码 (上三角真实存在的边)
