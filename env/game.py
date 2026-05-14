@@ -149,15 +149,21 @@ class PublicGoodsGame_v2:
             self.adj, 
             self.prev_decisions,
             self.capital,
-            self.edge_games
+            self.edge_games,
+            # Round 1 的 delta 传默认值即可，因为 Round 1 不涉及模仿
+            delta=getattr(BotConfig, 'DELTA', 10.0) 
         )
         
         self._apply_payoffs(coop_decisions)
         self.prev_decisions = coop_decisions
         
         return self._get_state()
-    delta = BotConfig.DELTA
-    def step(self, action_logits, delta = BotConfig.DELTA):
+
+    # --- 修复处：将 delta 参数正确添加到函数签名，并提供回退默认值 ---
+    def step(self, action_logits, delta=None):
+        if delta is None:
+            delta = getattr(BotConfig, 'DELTA', 10.0)
+            
         self.current_round += 1
         
         # 1. 提取有效边掩码 (上三角真实存在的边)
@@ -167,7 +173,7 @@ class PublicGoodsGame_v2:
         probs_high_risk = torch.softmax(action_logits, dim=-1)[..., 1]
         dist = torch.distributions.Bernoulli(probs_high_risk)
         recommended_games = dist.sample() * valid_edges_mask
-        delta=delta
+        
         # 3. 将 0/1 建议翻译为 -1(降级), 0(不变), 1(升级)，对应 a_SP
         rec_type = torch.zeros_like(self.edge_games)
         
@@ -207,7 +213,8 @@ class PublicGoodsGame_v2:
             self.adj, 
             self.prev_decisions,
             self.capital,
-            self.edge_games
+            self.edge_games,
+            delta=delta # <--- 正确传递 delta 给 bot
         )
         
         self._apply_payoffs(coop_decisions)
