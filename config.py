@@ -89,12 +89,12 @@ class ModelConfig:
     GLOBAL_IN_DIM = 1
     
 class TrainConfig:
-    BATCH_SIZE = 8  # 考虑到 N=20 及后续的显存占用，设为 8 非常稳妥
+    BATCH_SIZE = 32  # 考虑到 N=20 及后续的显存占用，设为 8 非常稳妥
     LR = 0.0004
     GAMMA = 0.99
     ENTROPY_COEF = 0.004
     VALUE_LOSS_COEF = 0.5
-    MAX_EPISODES = 400000 
+    MAX_EPISODES = 4000000
     LOG_INTERVAL = 100
     DEVICE = "cuda"
 
