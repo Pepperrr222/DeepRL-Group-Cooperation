@@ -88,7 +88,7 @@ def plot_results(n_games, model_path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--n", type=int, default=1000, help="运行的游戏局数")
+    parser.add_argument("--n", type=int, default=5000, help="运行的游戏局数")
     parser.add_argument("--model_path", type=str, 
                         default="checkpoints/replicate_0/final_model.pth",
                         help="GraphNet模型路径")
