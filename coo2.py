@@ -4,19 +4,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 import argparse
 import os
+import gc
 from env.game import PublicGoodsGame
 from config import GameConfig, MODE
 from planners.baselines import StaticPlanner, RandomPlanner, ReactivePlanner
 from planners.graphnet import GraphNetPlanner 
 
-def run_batch_simulation(strategy_name, model_path=None, n_games=1000, device="cuda"):
+def run_batch_simulation(strategy_name, model_path=None, n_games=5000, chunk_size=500, device="cuda"):
     """
-    运行批量模拟并返回每轮的平均合作率
+    运行批量模拟并返回每轮的平均合作率 (加入了防 OOM 的分块机制)
     """
-    # 1. 初始化环境 (利用 batch_size 实现并行)
-    env = PublicGoodsGame(batch_size=n_games, device=device)
-    
-    # 2. 选择策略 (包含 GraphNet)
+    # 1. 选择并初始化策略 (Planner 只需要初始化一次)
     if strategy_name == "static": 
         planner = StaticPlanner()
     elif strategy_name == "random": 
@@ -27,49 +25,71 @@ def run_batch_simulation(strategy_name, model_path=None, n_games=1000, device="c
         if model_path is None or not os.path.exists(model_path):
             raise FileNotFoundError(f"[错误] 未找到模型: {model_path}")
         planner = GraphNetPlanner(model_path=model_path, device=device)
-    else: raise ValueError("Unknown strategy")
+    else: 
+        raise ValueError("Unknown strategy")
 
-    # 3. 记录容器
-    coop_rates =[]
+    # 用于累加所有 Chunk 的合作率
+    accumulated_coop_rates = np.zeros(GameConfig.EPISODE_LENGTH)
+    
+    # 计算需要分多少个 Chunk
+    num_chunks = int(np.ceil(n_games / chunk_size))
+    print(f"  └─ 将 {n_games} 局分为 {num_chunks} 个 Chunk 进行计算 (Chunk Size: {chunk_size})...")
 
-    # 4. 运行博弈 (Round 1-15)
-    with torch.no_grad():
-        # Reset (执行 Round 1)
-        capital, prev_decisions, edge_features = env.reset()
-        coop_rates.append(prev_decisions.float().mean().item())
+    # 2. 分块运行博弈
+    for chunk_idx in range(num_chunks):
+        # 计算当前 chunk 实际包含的局数 (处理不能整除的情况)
+        current_batch_size = min(chunk_size, n_games - chunk_idx * chunk_size)
+        
+        # 初始化当前 chunk 的环境
+        env = PublicGoodsGame(batch_size=current_batch_size, device=device)
+        
+        chunk_coop_rates = []
 
-        # Round 2 - 15
-        for t in range(GameConfig.EPISODE_LENGTH - 1):
-            # 获取 Logits
-            # 注意: GraphNet 需要传入 edge_features
-            logits = planner.get_logits(capital, prev_decisions, edge_features, t + 1)
-            
-            # 环境 Step
-            next_state, _, _, _ = env.step(logits)
-            capital, prev_decisions, edge_features = next_state
-            
-            # 计算平均合作率
-            coop_rates.append(prev_decisions.float().mean().item())
+        with torch.no_grad():
+            # Reset (执行 Round 1)
+            capital, prev_decisions, edge_features = env.reset()
+            chunk_coop_rates.append(prev_decisions.float().mean().item())
 
-    return coop_rates
+            # Round 2 - 15
+            for t in range(GameConfig.EPISODE_LENGTH - 1):
+                logits = planner.get_logits(capital, prev_decisions, edge_features, t + 1)
+                next_state, _, _, _ = env.step(logits)
+                capital, prev_decisions, edge_features = next_state
+                
+                chunk_coop_rates.append(prev_decisions.float().mean().item())
+        
+        # 按照当前 chunk 的规模加权累加到总和中
+        accumulated_coop_rates += np.array(chunk_coop_rates) * current_batch_size
+        
+        # 显式清理当前 chunk 的显存，防止 OOM 累积
+        del env, capital, prev_decisions, edge_features
+        torch.cuda.empty_cache()
+        gc.collect()
 
-def plot_results(n_games, model_path):
+    # 计算全局平均合作率
+    final_avg_coop_rates = accumulated_coop_rates / n_games
+    return final_avg_coop_rates.tolist()
+
+def plot_results(n_games, model_path, chunk_size):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"[系统] 正在使用 {device} 运行 {n_games} 局平均测试...")
+    print(f"\n[系统] 正在使用 {device} 运行 {n_games} 局平均测试...")
 
-    # 配置策略列表
-    strategies =["static", "random", "reactive", "graphnet"]
+    strategies = ["static", "random", "reactive", "graphnet"]
     colors = {"static": "#95a5a6", "random": "#f1c40f", "reactive": "#e67e22", "graphnet": "#27ae60"}
     labels = {"static": "Static", "random": "Random", "reactive": "Reactive", "graphnet": "GraphNet Agent"}
 
     plt.figure(figsize=(10, 6))
     
     for str_name in strategies:
-        print(f"正在运行 {str_name} ...")
-        # 传入 model_path，只对 graphnet 有效
-        data = run_batch_simulation(str_name, model_path=model_path, n_games=n_games, device=device)
+        print(f"\n▶ 正在运行 {str_name.upper()} 策略 ...")
+        data = run_batch_simulation(
+            strategy_name=str_name, 
+            model_path=model_path, 
+            n_games=n_games, 
+            chunk_size=chunk_size, 
+            device=device
+        )
         
-        # 绘图
         rounds = np.arange(1, GameConfig.EPISODE_LENGTH + 1)
         plt.plot(rounds, data, label=labels[str_name], 
                  color=colors[str_name], marker='o', markersize=4, linewidth=2)
@@ -84,14 +104,16 @@ def plot_results(n_games, model_path):
     
     plt.savefig("coop_rate_comparison.png", dpi=300)
     print(f"\n✅ 绘图完成！图片已保存为: coop_rate_comparison.png")
-    plt.show()
+    # 如果是在服务器终端运行，通常不需要 plt.show()，注释掉防止卡住
+    # plt.show() 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--n", type=int, default=5000, help="运行的游戏局数")
+    parser.add_argument("--n", type=int, default=10000, help="运行的总游戏局数")
+    parser.add_argument("--chunk_size", type=int, default=500, help="单次放入GPU运行的局数(防OOM)")
     parser.add_argument("--model_path", type=str, 
                         default="checkpoints/replicate_0/final_model.pth",
                         help="GraphNet模型路径")
     args = parser.parse_args()
     
-    plot_results(n_games=args.n, model_path=args.model_path)
+    plot_results(n_games=args.n, model_path=args.model_path, chunk_size=args.chunk_size)

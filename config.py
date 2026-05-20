@@ -23,7 +23,7 @@ class GameConfig_v2:
     # 避免方差为 0 导致归一化时除零报错 (Division by Zero)
     ERDOS_RENYI_P = TARGET_AVG_DEGREE / (N_PLAYERS - 1)
     
-    EPISODE_LENGTH = 15
+    EPISODE_LENGTH = 30
     INITIAL_CAPITAL = 10.0
     BENEFIT_B = 0.1
     COST_C = 0.05
@@ -89,7 +89,7 @@ class ModelConfig:
     GLOBAL_IN_DIM = 1
     
 class TrainConfig:
-    BATCH_SIZE = 32  # 考虑到 N=20 及后续的显存占用，设为 8 非常稳妥
+    BATCH_SIZE = 32  
     LR = 0.0004
     GAMMA = 0.99
     ENTROPY_COEF = 0.004

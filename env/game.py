@@ -126,7 +126,7 @@ class PublicGoodsGame_v2:
         # degree 根据 config 动态获取，默认为 4
         degree = int(getattr(GameConfig, 'TARGET_AVG_DEGREE', 4))
         for i in range(self.pool_size):
-            G = nx.random_regular_graph(d=degree, n=self.n)
+            G = nx.random_regular_graph(degree, self.n)
             self.rrg_pool[i] = torch.tensor(nx.to_numpy_array(G), dtype=torch.float, device=self.device)
 
     def reset(self):
