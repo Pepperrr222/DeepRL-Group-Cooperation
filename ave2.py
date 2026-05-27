@@ -9,6 +9,11 @@ from config import GameConfig, MODE
 from planners.baselines import StaticPlanner, RandomPlanner, ReactivePlanner, StaticHighRiskPlannerV2
 from planners.graphnet import GraphNetPlanner
 
+try:
+    from env.llm_bots import LLMBots
+except ImportError:
+    LLMBots = None
+
 def batch_gini(capital_matrix):
     """
     批量计算 Gini 系数。
@@ -31,7 +36,8 @@ def batch_gini(capital_matrix):
     gini_per_game = torch.where(denominator == 0, torch.zeros_like(numerator), numerator / denominator)
     return gini_per_game.mean().item()
 
-def run_average_simulation(n_games=100, chunk_size=500, strategy_name="static", model_path=None):
+def run_average_simulation(n_games=100, chunk_size=500, strategy_name="static", model_path=None,
+                           use_llm=False, llm_kwargs=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     print(f"\n" + "="*85)
@@ -77,6 +83,16 @@ def run_average_simulation(n_games=100, chunk_size=500, strategy_name="static", 
         
         # 初始化当前 Chunk 的并行环境
         env = PublicGoodsGame(batch_size=current_bs, device=device)
+
+        # 如果启用 LLM，替换环境中的 bots
+        if use_llm:
+            env.bots = LLMBots(
+                batch_size=current_bs,
+                device=device,
+                api_key=llm_kwargs["api_key"],
+                base_url=llm_kwargs.get("base_url"),
+                model=llm_kwargs.get("model")
+            )
         
         with torch.no_grad():
             # Reset 环境 (执行 Round 1)
@@ -167,11 +183,29 @@ if __name__ == "__main__":
     parser.add_argument("--chunk_size", type=int, default=500, help="并行运算块大小(防OOM)")
     parser.add_argument("--strategy", type=str, default="static", choices=["static", "statichigh", "random", "reactive", "graphnet"])
     parser.add_argument("--model_path", type=str, default="checkpoints/replicate_0/final_model.pth", help="GraphNet 模型路径")
+    parser.add_argument("--use_llm", action="store_true", help="启用 LLM 替代模拟 Bot")
+    parser.add_argument("--api_key", type=str, default=os.environ.get("OPENAI_API_KEY", ""), help="API Key")
+    parser.add_argument("--base_url", type=str, default=None, help="自定义 API 地址 (DeepSeek/通义等)")
+    parser.add_argument("--model", type=str, default="gpt-4o-mini", help="模型名称")
     args = parser.parse_args()
-    
+
+    if args.use_llm:
+        if LLMBots is None:
+            print("[错误] 缺少依赖，请先 pip install openai"); import sys; sys.exit(1)
+        if not args.api_key:
+            print("[错误] --use_llm 需要 --api_key 或设置 OPENAI_API_KEY"); import sys; sys.exit(1)
+
+    llm_kwargs = {
+        "api_key": args.api_key,
+        "base_url": args.base_url,
+        "model": args.model
+    } if args.use_llm else None
+
     run_average_simulation(
-        n_games=args.n, 
+        n_games=args.n,
         chunk_size=args.chunk_size,
-        strategy_name=args.strategy, 
-        model_path=args.model_path
+        strategy_name=args.strategy,
+        model_path=args.model_path,
+        use_llm=args.use_llm,
+        llm_kwargs=llm_kwargs
     )

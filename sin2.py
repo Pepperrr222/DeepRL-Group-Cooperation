@@ -1,10 +1,16 @@
 # sin2.py
+import os
 import torch
 import numpy as np
 from env.game import PublicGoodsGame
 from config import GameConfig, MODE
 from planners.baselines import StaticPlanner, RandomPlanner, ReactivePlanner
 from planners.graphnet import GraphNetPlanner # 假设你封装了加载模型的类
+
+try:
+    from env.llm_bots import LLMBots
+except ImportError:
+    LLMBots = None
 
 def get_gini(x):
     """计算基尼系数"""
@@ -14,12 +20,27 @@ def get_gini(x):
     index = np.arange(1, n + 1)
     return (np.sum((2 * index - n - 1) * x)) / (n * np.sum(x))
 
-def run_single_game(strategy_name="graphnet"):
+def run_single_game(strategy_name="graphnet", use_llm=False, llm_kwargs=None):
     device = torch.device("cpu")
     
     # 1. 初始化环境
     env = PublicGoodsGame(batch_size=1, device=device)
-    
+
+    # 如果启用 LLM，替换环境中的 bots
+    if use_llm:
+        if LLMBots is None:
+            raise ImportError("未找到 env.llm_bots 或缺少依赖(openai 库)。请 pip install openai")
+        if llm_kwargs is None or not llm_kwargs.get("api_key"):
+            raise ValueError("使用 LLM 必须提供 api_key。")
+        print(f"[系统] 正在将模拟 Bot 替换为 LLM ({llm_kwargs.get('model')})...")
+        env.bots = LLMBots(
+            batch_size=1,
+            device=device,
+            api_key=llm_kwargs["api_key"],
+            base_url=llm_kwargs.get("base_url"),
+            model=llm_kwargs.get("model")
+        )
+
     # 2. 根据名称选择 Planner
     if strategy_name == "static": planner = StaticPlanner()
     elif strategy_name == "random": planner = RandomPlanner()
@@ -87,6 +108,21 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--strategy", type=str, default="static", choices=["static", "random", "reactive", "graphnet"])
+    parser.add_argument("--use_llm", action="store_true", help="启用 LLM 替代模拟 Bot")
+    parser.add_argument("--api_key", type=str, default=os.environ.get("OPENAI_API_KEY", ""), help="API Key")
+    parser.add_argument("--base_url", type=str, default=None, help="自定义 API 地址 (DeepSeek/通义等)")
+    parser.add_argument("--model", type=str, default="gpt-4o-mini", help="模型名称")
     args = parser.parse_args()
-    
-    run_single_game(args.strategy)
+
+    if args.use_llm and not args.api_key:
+        print("\n[错误] 开启 --use_llm 但未提供 api_key。")
+        print("请添加 --api_key sk-xxx 或设置环境变量 OPENAI_API_KEY")
+        import sys; sys.exit(1)
+
+    llm_kwargs = {
+        "api_key": args.api_key,
+        "base_url": args.base_url,
+        "model": args.model
+    } if args.use_llm else None
+
+    run_single_game(args.strategy, use_llm=args.use_llm, llm_kwargs=llm_kwargs)
