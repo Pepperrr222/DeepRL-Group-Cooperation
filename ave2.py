@@ -6,7 +6,7 @@ import os
 import gc
 from env.game import PublicGoodsGame
 from config import GameConfig, MODE
-from planners.baselines import StaticPlanner, RandomPlanner, ReactivePlanner
+from planners.baselines import StaticPlanner, RandomPlanner, ReactivePlanner, StaticHighRiskPlannerV2
 from planners.graphnet import GraphNetPlanner
 
 def batch_gini(capital_matrix):
@@ -47,6 +47,8 @@ def run_average_simulation(n_games=100, chunk_size=500, strategy_name="static", 
         planner = RandomPlanner()
     elif strategy_name == "reactive": 
         planner = ReactivePlanner()
+    elif strategy_name == "statichigh": 
+        planner = StaticHighRiskPlannerV2()
     elif strategy_name == "graphnet": 
         if model_path is None or not os.path.exists(model_path):
             raise FileNotFoundError(f"[错误] 未找到模型文件: {model_path}，请先训练！")
@@ -163,7 +165,7 @@ if __name__ == "__main__":
     parser.add_argument("--n", type=int, default=100, help="运行的游戏局数")
     # 【新增】支持手动调控分块大小，默认为 500
     parser.add_argument("--chunk_size", type=int, default=500, help="并行运算块大小(防OOM)")
-    parser.add_argument("--strategy", type=str, default="static", choices=["static", "random", "reactive", "graphnet"])
+    parser.add_argument("--strategy", type=str, default="static", choices=["static", "statichigh", "random", "reactive", "graphnet"])
     parser.add_argument("--model_path", type=str, default="checkpoints/replicate_0/final_model.pth", help="GraphNet 模型路径")
     args = parser.parse_args()
     

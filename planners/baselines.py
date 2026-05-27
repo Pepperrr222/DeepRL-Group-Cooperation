@@ -55,6 +55,17 @@ class StaticPlannerV2(BasePlanner):
         logits[..., 1] = -10.0
         return logits
 
+class StaticHighRiskPlannerV2(BasePlanner):
+
+    def get_logits(self, capital, prev_decisions, edge_features, round_num):
+        B, N, _, _ = edge_features.shape
+        logits = torch.zeros(B, N, N, 2, device=edge_features.device)
+        logits[..., 0] = -10.0
+        logits[..., 1] = 10.0 # 始终选择 Index 1 (高风险)
+        return logits
+
+
+
 class RandomPlannerV2(BasePlanner):
     """
     V2 随机规划师（严格修正版）：
@@ -127,6 +138,7 @@ class ReactivePlannerV2(BasePlanner):
 if MODE == 1: # V2 模式
     StaticPlanner = StaticPlannerV2
     RandomPlanner = RandomPlannerV2
+    StaticHighRiskPlanner = StaticHighRiskPlannerV2 
     MaxConnectivityPlanner = MaxRiskPlannerV2
     ReactivePlanner = ReactivePlannerV2
 else: # V1 模式

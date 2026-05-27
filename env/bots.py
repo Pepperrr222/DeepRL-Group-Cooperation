@@ -47,7 +47,7 @@ class SimulatedBots_v1:
         probs = torch.clamp(probs, 0.0, 1.0)
         initial_decisions = torch.bernoulli(probs)
         
-        # 3. 强制背叛 (资金不足)
+        # 3. 强制背叛 (资金不足) - V1 保留此逻辑
         potential_cost = GameConfig.COST_C * x_s
         cannot_afford_mask = current_capital < potential_cost
         
@@ -88,6 +88,7 @@ class SimulatedBots_v2:
     def decide_cooperation(self, round_num, adj_matrix, prev_decisions, current_capital, edge_games, delta=BotConfig.DELTA):
         """
         V2 演化博弈版本：模仿邻居策略
+        已移除破产保护：即使资金为负也可继续合作，决策完全基于模仿逻辑。
         """
         B, N = self.bs, self.n_players
         
@@ -125,26 +126,14 @@ class SimulatedBots_v2:
             prev_dec_j = prev_decisions.unsqueeze(1).expand(-1, N, -1) 
             prob_coop = (p_ij * prev_dec_j).sum(dim=2) # (B, N)
             
-            # ====================================================
-            # 核心修复处：数值安全保护 (防止浮点误差导致 p > 1)
-            # ====================================================
+            # 数值安全保护 (防止浮点误差导致 p > 1)
             prob_coop = torch.clamp(prob_coop, 0.0, 1.0)
             
             initial_decisions = torch.bernoulli(prob_coop)
 
-        # 4. 强制背叛 (动态破产保护)
-        worst_loss_low = abs(GameConfig.LOW_RISK_MATRIX[1][0])
-        worst_loss_high = abs(GameConfig.HIGH_RISK_MATRIX[1][0])
-        
-        potential_loss_matrix = edge_games * worst_loss_high + (1.0 - edge_games) * worst_loss_low
-        potential_cost = (potential_loss_matrix * adj_matrix).sum(dim=2)
-        
-        cannot_afford_mask = current_capital < potential_cost
-        
-        final_decisions = initial_decisions.clone()
-        final_decisions[cannot_afford_mask] = 0.0
-        
-        return final_decisions
+        # 【修改处】删除了原有的“强制背叛 (动态破产保护)”逻辑
+        # 决策现在直接返回 initial_decisions，不检查 current_capital
+        return initial_decisions
 
     def decide_acceptance(self, recommendations, prev_decisions):
         B, N, _ = recommendations.shape

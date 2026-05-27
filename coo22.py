@@ -8,7 +8,7 @@ import gc
 import networkx as nx
 from env.game import PublicGoodsGame
 from config import GameConfig, MODE
-from planners.baselines import StaticPlanner, RandomPlanner, ReactivePlanner
+from planners.baselines import StaticPlanner, RandomPlanner, ReactivePlanner, StaticHighRiskPlannerV2
 from planners.graphnet import GraphNetPlanner 
 
 # 确保在机制设计模式下运行
@@ -36,6 +36,8 @@ def inject_graph_topology(env, graph_type):
             # 经典随机图 (Erdos-Renyi)
             p = degree / (n - 1)
             G = nx.erdos_renyi_graph(n=n, p=p)
+    
+
         else:
             raise ValueError(f"未知的图拓扑类型: {graph_type}")
             
@@ -50,6 +52,7 @@ def run_batch_simulation(strategy_name, graph_type, model_path=None, n_games=500
     if strategy_name == "static": planner = StaticPlanner()
     elif strategy_name == "random": planner = RandomPlanner()
     elif strategy_name == "reactive": planner = ReactivePlanner()
+    elif strategy_name == "statichigh": planner = StaticHighRiskPlannerV2()
     elif strategy_name == "graphnet":
         if model_path is None or not os.path.exists(model_path):
             raise FileNotFoundError(f"[错误] 未找到模型: {model_path}")
@@ -100,10 +103,10 @@ def plot_results(n_games, model_path, chunk_size):
     print(f"\n[系统] 使用 {device} 运行多拓扑测试 (局数: {n_games}/图)...")
 
     topologies = ["RRG", "BA", "WS", "ER"]
-    strategies = ["static", "random", "reactive", "graphnet"]
+    strategies = ["static", "random", "reactive", "statichigh", "graphnet"]
     
-    colors = {"static": "#95a5a6", "random": "#f1c40f", "reactive": "#e67e22", "graphnet": "#27ae60"}
-    labels = {"static": "Static", "random": "Random", "reactive": "Reactive", "graphnet": "GraphNet Agent"}
+    colors = {"static": "#95a5a6", "random": "#f1c40f", "reactive": "#e67e22", "statichigh": "#c0392b", "graphnet": "#27ae60"}
+    labels = {"static": "Static", "random": "Random", "reactive": "Reactive", "statichigh": "Static High-Risk", "graphnet": "GraphNet Agent"}
     topo_titles = {"RRG": "Random Regular Graph", "BA": "Scale-Free (Barabasi-Albert)", 
                    "WS": "Small-World (Watts-Strogatz)", "ER": "Erdos-Renyi Random Graph"}
 

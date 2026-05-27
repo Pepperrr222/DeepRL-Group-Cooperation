@@ -161,84 +161,62 @@ class PublicGoodsGame_v2:
 
     # --- 修复处：将 delta 参数正确添加到函数签名，并提供回退默认值 ---
     def step(self, action_logits, delta=None):
+        """
+        V2 强制执行版：
+        1. 删除了 accept_i/accept_j 逻辑，Agent 建议即现实。
+        2. 奖励函数为纯群体平均资金（去除了拒绝惩罚）。
+        """
+        # 0. 处理 delta 默认值
         if delta is None:
+            # 尝试从 BotConfig 获取，如果获取不到则默认为 10.0
             delta = getattr(BotConfig, 'DELTA', 10.0)
             
         self.current_round += 1
         
-        # 1. 提取有效边掩码 (上三角真实存在的边)
+        # 1. 提取有效边掩码 (上三角且真实存在的边)
         valid_edges_mask = torch.triu(self.adj, 1) 
         
         # 2. Agent 输出建议的风险等级 (0: 低风险, 1: 高风险)
+        # 根据 action_logits 采样，结果为 0 或 1
         probs_high_risk = torch.softmax(action_logits, dim=-1)[..., 1]
         dist = torch.distributions.Bernoulli(probs_high_risk)
         recommended_games = dist.sample() * valid_edges_mask
-        
-        # 3. 将 0/1 建议翻译为 -1(降级), 0(不变), 1(升级)，对应 a_SP
-        rec_type = torch.zeros_like(self.edge_games)
-        
-        # 想要升级：当前是0，建议是1
-        upgrade_mask = (self.edge_games == 0) & (recommended_games == 1) & (valid_edges_mask == 1)
-        rec_type[upgrade_mask] = 1.0
-        
-        # 想要降级：当前是1，建议是0
-        downgrade_mask = (self.edge_games == 1) & (recommended_games == 0) & (valid_edges_mask == 1)
-        rec_type[downgrade_mask] = -1.0
-        
-        # 对称化，使得 a_SP(i,j) = a_SP(j,i)
-        rec_type = rec_type + rec_type.transpose(1, 2)
-        
+
         # ==========================================
-        # 核心修改 1：严格的接受逻辑 (基于要求：双方都接受才更改)
+        # 核心修改：强制采纳 (Forced Compliance)
         # ==========================================
-        # accept_i[b, i, j] 代表玩家 i 是否接受了对边 (i,j) 的建议
-        accept_i = self.bots.decide_acceptance(rec_type, self.prev_decisions)
-        # accept_j[b, i, j] 代表玩家 j 是否接受了对边 (i,j) 的建议
-        accept_j = accept_i.transpose(1, 2)
+        # 找出 Agent 想要改变规则的边 (即建议的规则与当前 self.edge_games 不同的位置)
+        # 注意：这里不再需要调用 bots.decide_acceptance
+        final_change_mask = (recommended_games != self.edge_games) & (valid_edges_mask == 1)
         
-        # 只有边两边的玩家都接受更改，才会更改边上的博弈
-        both_accept = (accept_i == 1) & (accept_j == 1)
-        
-        # 最终改变：Agent提了建议 (rec_type != 0) 且 双方都接受 (both_accept)
-        final_change_mask = (rec_type != 0) & both_accept & (valid_edges_mask == 1)
-        
-        # 更新规则
+        # 直接覆盖旧规则
         new_edge_games = self.edge_games.clone()
         new_edge_games[final_change_mask.bool()] = recommended_games[final_change_mask.bool()]
+        
+        # 保持无向图的规则对称
         self.edge_games = torch.triu(new_edge_games, 1) + torch.triu(new_edge_games, 1).transpose(1, 2)
         
-        # 4. 玩家在新规则下进行博弈决策
+        # 3. 玩家在【新规则】下进行博弈决策 (采用模仿动态逻辑)
         coop_decisions = self.bots.decide_cooperation(
             self.current_round, 
             self.adj, 
             self.prev_decisions,
             self.capital,
             self.edge_games,
-            delta=delta # <--- 正确传递 delta 给 bot
+            delta=delta # 传递 delta 参数
         )
         
+        # 结算资金变动
         self._apply_payoffs(coop_decisions)
         self.prev_decisions = coop_decisions
 
         # ==========================================
-        # 核心修改 2：严格的惩罚函数 (公式 3 & 4)
+        # 奖励计算：纯群体平均资金
         # ==========================================
         group_welfare = self.capital.mean(dim=1)
         
-        # 计算 f(a_SP, a^1, i, j) = 1 的数量：
-        # 条件：a_SP != 0 AND a^1_{i,j} == 0 AND a^1_{j,i} == 0
-        both_reject = (accept_i == 0) & (accept_j == 0)
-        penalty_mask = (rec_type != 0) & both_reject & (valid_edges_mask == 1)
-        
-        # 论文中的 m 是网络中可能存在的边。因为拓扑固定，m 实际上就是真实连接的边数
-        num_penalties = penalty_mask.sum(dim=(1, 2))
-        num_valid_edges = valid_edges_mask.sum(dim=(1, 2)) + 1e-8
-        
-        # 惩罚 = P * (1/m * SUM(f))
-        penalty = GameConfig.PENALTY_WEIGHT_P * (num_penalties / num_valid_edges)
-        
-        # 恢复原版：纯粹的[群体平均资金 - 建议被双双拒绝的惩罚]
-        reward = group_welfare - penalty
+
+        reward = group_welfare 
         
         return self._get_state(), reward, dist, recommended_games
 

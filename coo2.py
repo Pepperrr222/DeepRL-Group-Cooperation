@@ -7,7 +7,7 @@ import os
 import gc
 from env.game import PublicGoodsGame
 from config import GameConfig, MODE
-from planners.baselines import StaticPlanner, RandomPlanner, ReactivePlanner
+from planners.baselines import StaticPlanner, RandomPlanner, ReactivePlanner, StaticHighRiskPlannerV2
 from planners.graphnet import GraphNetPlanner 
 
 def run_batch_simulation(strategy_name, model_path=None, n_games=5000, chunk_size=500, device="cuda"):
@@ -21,7 +21,12 @@ def run_batch_simulation(strategy_name, model_path=None, n_games=5000, chunk_siz
         planner = RandomPlanner()
     elif strategy_name == "reactive": 
         planner = ReactivePlanner()
+    
+    elif strategy_name == "statichigh": 
+        planner = StaticHighRiskPlannerV2()
+
     elif strategy_name == "graphnet":
+
         if model_path is None or not os.path.exists(model_path):
             raise FileNotFoundError(f"[错误] 未找到模型: {model_path}")
         planner = GraphNetPlanner(model_path=model_path, device=device)
@@ -74,9 +79,9 @@ def plot_results(n_games, model_path, chunk_size):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\n[系统] 正在使用 {device} 运行 {n_games} 局平均测试...")
 
-    strategies = ["static", "random", "reactive", "graphnet"]
-    colors = {"static": "#95a5a6", "random": "#f1c40f", "reactive": "#e67e22", "graphnet": "#27ae60"}
-    labels = {"static": "Static", "random": "Random", "reactive": "Reactive", "graphnet": "GraphNet Agent"}
+    strategies = ["static", "statichigh", "random", "reactive", "graphnet"]
+    colors = {"static": "#95a5a6", "statichigh": "#e74c3c", "random": "#f1c40f", "reactive": "#e67e22", "graphnet": "#27ae60"}
+    labels = {"static": "Static", "statichigh": "Static High Risk", "random": "Random", "reactive": "Reactive", "graphnet": "GraphNet Agent"}
 
     plt.figure(figsize=(10, 6))
     

@@ -23,15 +23,15 @@ class GameConfig_v2:
     # 避免方差为 0 导致归一化时除零报错 (Division by Zero)
     ERDOS_RENYI_P = TARGET_AVG_DEGREE / (N_PLAYERS - 1)
     
-    EPISODE_LENGTH = 30
+    EPISODE_LENGTH = 15
     INITIAL_CAPITAL = 10.0
     BENEFIT_B = 0.1
     COST_C = 0.05
-
+ 
     # 收益矩阵参数
     C_HIGH = 0.1
     C_LOW = 0.1
-    B_HIGH = 0.4
+    B_HIGH = 0.3
     B_LOW = 0.2
 
     # 惩罚权重 (复原为原论文的设定)
@@ -51,7 +51,7 @@ class BotConfig:
     # 模拟人类参数
     MU_THETA = -0.304
     SIGMA_THETA = 2.410
-    DELTA = 4.0
+    DELTA = 10.0
     # ==========================================
     # 2. 动态计算标准化统计量
     # ==========================================
