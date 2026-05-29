@@ -100,15 +100,15 @@ class TrainConfig:
 
 class LLMConfig:
     API_KEY = ""           # 通过命令行 --api_key 或环境变量 OPENAI_API_KEY 覆盖
-    BASE_URL = None        # None = OpenAI官方; 设值 = 兼容 DeepSeek/通义等
-    MODEL = "mimo-v2-flash"  # 模型名称
+    BASE_URL = "https://models.sjtu.edu.cn/api/v1"  # 上交大 API 地址
+    MODEL = "deepseek-chat"  # 可选: deepseek-chat, deepseek-reasoner, minimax, glm, qwen
     MAX_WORKERS = 4        # 并发线程数
     TEMPERATURE = 0.3      # 低温度保证输出稳定
     FALLBACK = 0           # API 失败时的默认决策 (0=背叛)
     MAX_RETRIES = 5        # 429 等错误的最大重试次数
-    RETRY_DELAY = 1.0      # 重试初始等待秒数 (指数退避)
-    RPM = 100              # 每分钟最大请求数
-    TPM = 10_000_000       # 每分钟最大 token 数
+    RETRY_DELAY = 6.0      # 重试初始等待秒数 (10 RPM → 至少 6s 间隔)
+    RPM = 10               # 每分钟最大请求数 (学校限制)
+    TPM = 100_000          # 每分钟最大 token 数
 
 if MODE == 0:
     GameConfig = GameConfig_v1
