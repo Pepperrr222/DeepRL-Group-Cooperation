@@ -38,16 +38,16 @@ def run_batch_simulation(strategy_name, model_path=None, n_games=5000, chunk_siz
     
     # 计算需要分多少个 Chunk
     num_chunks = int(np.ceil(n_games / chunk_size))
-    print(f"  └─ 将 {n_games} 局分为 {num_chunks} 个 Chunk 进行计算 (Chunk Size: {chunk_size})...")
+    print(f"  ├─ 总对局: {n_games} | Chunk: {chunk_size}/批 | {num_chunks} 批次")
 
     # 2. 分块运行博弈
     for chunk_idx in range(num_chunks):
         # 计算当前 chunk 实际包含的局数 (处理不能整除的情况)
         current_batch_size = min(chunk_size, n_games - chunk_idx * chunk_size)
-        
+
         # 初始化当前 chunk 的环境
         env = PublicGoodsGame(batch_size=current_batch_size, device=device)
-        
+
         chunk_coop_rates = []
 
         with torch.no_grad():
@@ -60,16 +60,27 @@ def run_batch_simulation(strategy_name, model_path=None, n_games=5000, chunk_siz
                 logits = planner.get_logits(capital, prev_decisions, edge_features, t + 1)
                 next_state, _, _, _ = env.step(logits)
                 capital, prev_decisions, edge_features = next_state
-                
+
                 chunk_coop_rates.append(prev_decisions.float().mean().item())
-        
+
         # 按照当前 chunk 的规模加权累加到总和中
         accumulated_coop_rates += np.array(chunk_coop_rates) * current_batch_size
-        
+
         # 显式清理当前 chunk 的显存，防止 OOM 累积
         del env, capital, prev_decisions, edge_features
         torch.cuda.empty_cache()
         gc.collect()
+
+        # 打印当前 chunk 完成进度
+        games_done = (chunk_idx + 1) * chunk_size
+        if games_done > n_games:
+            games_done = n_games
+        pct = games_done / n_games * 100
+        avg_cr = np.mean(chunk_coop_rates)
+        bar_len = 30
+        filled = int(bar_len * (chunk_idx + 1) / num_chunks)
+        bar = "█" * filled + "░" * (bar_len - filled)
+        print(f"  [{bar}] {games_done}/{n_games} ({pct:.0f}%) | avg_coop={avg_cr:.4f}", flush=True)
 
     # 计算全局平均合作率
     final_avg_coop_rates = accumulated_coop_rates / n_games
@@ -84,20 +95,36 @@ def plot_results(n_games, model_path, chunk_size):
     labels = {"static": "Static", "statichigh": "Static High Risk", "random": "Random", "reactive": "Reactive", "graphnet": "GraphNet Agent"}
 
     plt.figure(figsize=(10, 6))
-    
-    for str_name in strategies:
-        print(f"\n▶ 正在运行 {str_name.upper()} 策略 ...")
+
+    final_summary = {}  # 记录每种策略的总平均合作率
+
+    for idx, str_name in enumerate(strategies):
+        print(f"\n{'─'*60}")
+        print(f"[{idx+1}/{len(strategies)}] 正在运行 {str_name.upper()} 策略 ...")
+        print(f"{'─'*60}")
         data = run_batch_simulation(
-            strategy_name=str_name, 
-            model_path=model_path, 
-            n_games=n_games, 
-            chunk_size=chunk_size, 
+            strategy_name=str_name,
+            model_path=model_path,
+            n_games=n_games,
+            chunk_size=chunk_size,
             device=device
         )
-        
+
+        overall_avg = np.mean(data)
+        final_summary[str_name] = overall_avg
+        print(f"  ✅ {labels[str_name]} 完成 | 全局平均合作率: {overall_avg:.4f}")
+
         rounds = np.arange(1, GameConfig.EPISODE_LENGTH + 1)
-        plt.plot(rounds, data, label=labels[str_name], 
+        plt.plot(rounds, data, label=labels[str_name],
                  color=colors[str_name], marker='o', markersize=4, linewidth=2)
+
+    # 打印汇总表
+    print(f"\n{'='*60}")
+    print(f"{'策略':<20} {'总平均合作率':>15}")
+    print(f"{'-'*60}")
+    for str_name in strategies:
+        print(f"{labels[str_name]:<20} {final_summary[str_name]:>15.4f}")
+    print(f"{'='*60}")
 
     # 美化
     plt.title(f"Cooperation Rate Evolution ({n_games} Games Avg)\nMode: {'V2 (Rules)' if MODE==1 else 'V1 (Topol)'}", fontsize=14)

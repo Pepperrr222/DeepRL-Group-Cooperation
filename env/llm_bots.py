@@ -1,6 +1,7 @@
 import torch
 import re
 import time
+import csv
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from openai import OpenAI
@@ -23,7 +24,8 @@ class RateLimiter:
 
 
 class LLMBots:
-    def __init__(self, batch_size, device, api_key=None, base_url=None, model=None):
+    def __init__(self, batch_size, device, api_key=None, base_url=None, model=None,
+                 resp_writer=None, resp_file=None, resp_lock=None):
         self.bs = batch_size
         self.device = device
         self.n_players = GameConfig.N_PLAYERS
@@ -38,6 +40,15 @@ class LLMBots:
         self.client = OpenAI(**client_kwargs)
 
         self._rate_limiter = RateLimiter(LLMConfig.RPM)
+        self._first_success_lock = threading.Lock()
+        self._first_success_logged = False
+
+        # LLM 响应日志（由外部打开文件句柄控制）
+        self._resp_writer = resp_writer
+        self._resp_file = resp_file
+        self._resp_lock = resp_lock or threading.Lock()
+        self._strategy_name = ""   # 由调用方设置
+        self._game_offset = 0      # 由调用方设置
 
         self.theta = torch.normal(
             BotConfig.MU_THETA,
@@ -46,7 +57,10 @@ class LLMBots:
             device=self.device
         )
 
-    def _call_llm(self, prompt, fallback=None):
+    def _call_llm(self, prompt, fallback=None, log_meta=None):
+        """
+        log_meta: (round_num, game_id, player_id) 可选，提供则每次成功回复立即写入 CSV
+        """
         if fallback is None:
             fallback = LLMConfig.FALLBACK
         delay = LLMConfig.RETRY_DELAY
@@ -67,9 +81,31 @@ class LLMBots:
                 )
                 reply = response.choices[0].message.content.strip()
                 match = re.search(r'[01]', reply)
+                decision = float(match.group(0)) if match else float(fallback)
+
                 if match:
-                    return float(match.group(0))
-                return float(fallback)
+                    with self._first_success_lock:
+                        if not self._first_success_logged:
+                            self._first_success_logged = True
+                            print(f"[LLM] ✅ 首次调用成功！模型回复: '{reply}' → {match.group(0)}", flush=True)
+
+                # 动态写入响应日志
+                if log_meta is not None:
+                    rnd, gid, pid = log_meta
+                    with self._resp_lock:
+                        if self._resp_writer is not None:
+                            self._resp_writer.writerow((
+                                self._strategy_name,
+                                self._game_offset + gid,
+                                rnd, pid,
+                                prompt[:80].replace("\n", " "),
+                                reply[:200].replace("\n", " "),
+                                int(decision),
+                            ))
+                            self._resp_file.flush()
+
+                return decision
+
             except Exception as e:
                 if attempt < LLMConfig.MAX_RETRIES:
                     print(f"[LLM] attempt {attempt} failed: {e}. retry in {delay:.1f}s")
@@ -127,18 +163,19 @@ class LLMBots:
         actual_payoff = payoff_high * edge_games + payoff_low * (1.0 - edge_games)
         player_payoffs = (actual_payoff * adj_matrix).sum(dim=2)  # (B, N)
 
-        # 构造 prompt
-        prompts = []
+        # 构造 (prompt, log_meta) 列表
+        tasks = []
         for b in range(B):
             for i in range(N):
                 neighbors = adj_matrix[b, i].nonzero(as_tuple=True)[0]
                 n_actions = [int(prev_decisions[b, j].item()) for j in neighbors]
                 n_payoffs = [player_payoffs[b, j].item() for j in neighbors]
-                prompts.append(self._build_prompt(round_num, n_actions, n_payoffs))
+                prompt = self._build_prompt(round_num, n_actions, n_payoffs)
+                tasks.append((prompt, (round_num, b, i)))
 
         with ThreadPoolExecutor(max_workers=LLMConfig.MAX_WORKERS) as executor:
             results = list(executor.map(
-                lambda p: self._call_llm(p), prompts
+                lambda t: self._call_llm(t[0], log_meta=t[1]), tasks
             ))
 
         decisions = torch.tensor(results, device=self.device).view(B, N)

@@ -43,14 +43,26 @@ def get_planner(strategy_name, device, model_path=None):
         raise ValueError(f"未知策略: {strategy_name}")
 
 
-def run_strategy(strategy_name, n_games, chunk_size, device, model_path, use_llm, llm_kwargs):
-    """运行指定策略的 n_games 局游戏，返回每局每轮的指标列表。"""
+def run_strategy(strategy_name, n_games, chunk_size, device, model_path, use_llm, llm_kwargs, summary_csv, summary_file):
+    """运行指定策略的 n_games 局游戏。边跑边写两个 CSV：LLM响应 + 汇总指标。"""
     planner = get_planner(strategy_name, device, model_path)
 
-    # 每条记录: (strategy, game_id, round, coop_rate, avg_capital, high_risk_ratio, gini)
-    records = []
+    all_coop_rates = []
     num_chunks = int(np.ceil(n_games / chunk_size))
     game_offset = 0
+
+    # 如果启用 LLM，打开当前策略的 LLM 响应日志 CSV
+    resp_file = None
+    resp_writer = None
+    resp_lock = None
+    if use_llm:
+        resp_lock = __import__('threading').Lock()
+        resp_path = f"llm_{strategy_name}.csv"
+        resp_file = open(resp_path, "w", newline="", encoding="utf-8")
+        resp_writer = csv.writer(resp_file)
+        resp_writer.writerow(["strategy", "game_id", "round", "player_id", "prompt_preview", "raw_reply", "decision"])
+        resp_file.flush()
+        print(f"  📝 LLM 响应日志: {resp_path}")
 
     for chunk_idx in range(num_chunks):
         current_bs = min(chunk_size, n_games - game_offset)
@@ -64,7 +76,12 @@ def run_strategy(strategy_name, n_games, chunk_size, device, model_path, use_llm
                 api_key=llm_kwargs["api_key"],
                 base_url=llm_kwargs.get("base_url"),
                 model=llm_kwargs.get("model"),
+                resp_writer=resp_writer, resp_file=resp_file, resp_lock=resp_lock,
             )
+            env.bots._strategy_name = strategy_name
+            env.bots._game_offset = game_offset
+
+        chunk_rows = 0
 
         with torch.no_grad():
             capital, prev_decisions, edge_features = env.reset()
@@ -75,10 +92,9 @@ def run_strategy(strategy_name, n_games, chunk_size, device, model_path, use_llm
                     next_state, _, _, _ = env.step(logits)
                     capital, prev_decisions, edge_features = next_state
 
-                # 逐局记录
-                coop_batch = prev_decisions.float().mean(dim=1)          # (B,)
-                cap_batch = capital.mean(dim=1)                          # (B,)
-                gini_batch = batch_gini(capital)                         # (B,)
+                coop_batch = prev_decisions.float().mean(dim=1)
+                cap_batch = capital.mean(dim=1)
+                gini_batch = batch_gini(capital)
 
                 if MODE == 1:
                     adj = edge_features[..., 0]
@@ -91,50 +107,78 @@ def run_strategy(strategy_name, n_games, chunk_size, device, model_path, use_llm
                 else:
                     hr_ratio = torch.zeros(current_bs, device=device)
 
+                # 写入汇总 CSV（每轮一批）
                 for b in range(current_bs):
-                    records.append((
-                        strategy_name,
-                        game_offset + b,
-                        t + 1,
-                        coop_batch[b].item(),
-                        cap_batch[b].item(),
-                        hr_ratio[b].item(),
-                        gini_batch[b].item(),
+                    summary_csv.writerow((
+                        strategy_name, game_offset + b, t + 1,
+                        coop_batch[b].item(), cap_batch[b].item(),
+                        hr_ratio[b].item(), gini_batch[b].item(),
                     ))
+                    all_coop_rates.append(coop_batch[b].item())
+                    chunk_rows += 1
+                summary_file.flush()
 
             game_offset += current_bs
 
-        del env, capital, prev_decisions, edge_features
+        last_coop = coop_batch.mean().item()
+        del env, capital, prev_decisions, edge_features, coop_batch, cap_batch, gini_batch
         torch.cuda.empty_cache()
         gc.collect()
-        print(f"  [{strategy_name}] chunk {chunk_idx + 1}/{num_chunks} done ({current_bs} games)")
 
-    return records
+        games_done = min((chunk_idx + 1) * chunk_size, n_games)
+        pct = games_done / n_games * 100
+        bar_len = 30
+        filled = int(bar_len * (chunk_idx + 1) / num_chunks)
+        bar = "█" * filled + "░" * (bar_len - filled)
+        print(f"  [{bar}] {games_done}/{n_games} ({pct:.0f}%) | last_coop={last_coop:.4f} | +{chunk_rows}行", flush=True)
+
+    if resp_file:
+        resp_file.close()
+    return all_coop_rates
 
 
 def main():
     parser = argparse.ArgumentParser(description="四种 Planner 批量模拟并导出 CSV")
-    parser.add_argument("--n", type=int, default=500, help="每种策略运行的游戏局数")
-    parser.add_argument("--chunk_size", type=int, default=500, help="单次并行局数 (防 OOM)")
+    parser.add_argument("--n", type=int, default=1, help="每种策略运行的游戏局数")
+    parser.add_argument("--chunk_size", type=int, default=1, help="单次并行局数 (防 OOM)")
     parser.add_argument("--model_path", type=str, default="checkpoints/replicate_0/final_model.pth")
     parser.add_argument("--output", type=str, default="llm_test_results.csv", help="输出 CSV 文件名")
     # LLM 相关
     parser.add_argument("--use_llm", action="store_true", help="启用 LLM Bot 替代模拟 Bot")
-    parser.add_argument("--api_key", type=str, default=os.environ.get("OPENAI_API_KEY", ""))
-    parser.add_argument("--base_url", type=str, default=None)
+    parser.add_argument("--api_key", type=str, default="",
+                        help="API Key，默认从环境变量自动检测")
+    parser.add_argument("--base_url", type=str, default=None,
+                        help="API 地址，默认使用 config.LLMConfig.BASE_URL")
     parser.add_argument("--model", type=str, default="gpt-4o-mini")
     args = parser.parse_args()
+
+    # --- 智能 API Key 检测 ---
+    if args.use_llm and not args.api_key:
+        # 根据 base_url 自动选择对应的 env key
+        resolved_url = args.base_url or __import__('config').LLMConfig.BASE_URL
+        if "deepseek.com" in resolved_url:
+            args.api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        elif "sjtu" in resolved_url:
+            args.api_key = os.environ.get("SJTU_API_KEY", "")
+        if not args.api_key:
+            args.api_key = os.environ.get("OPENAI_API_KEY", "")
 
     if args.use_llm:
         if LLMBots is None:
             print("[错误] 缺少依赖，请先 pip install openai")
             return
         if not args.api_key:
-            print("[错误] --use_llm 需要 --api_key 或设置 OPENAI_API_KEY")
+            print("[错误] 请设置环境变量或 --api_key")
+            print("  交大:  export SJTU_API_KEY=sk-xxx")
+            print("  官方:  export DEEPSEEK_API_KEY=sk-xxx")
+            print("  通用:  export OPENAI_API_KEY=sk-xxx")
             return
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    actual_url = args.base_url or (__import__('config').LLMConfig.BASE_URL if args.use_llm else "N/A")
     print(f"设备: {device} | 模式: {'V2' if MODE == 1 else 'V1'} | LLM: {'ON' if args.use_llm else 'OFF'}")
+    if args.use_llm:
+        print(f"API: {actual_url} | 模型: {args.model}")
     print(f"每策略 {args.n} 局, 输出: {args.output}\n")
 
     llm_kwargs = {
@@ -144,32 +188,54 @@ def main():
     } if args.use_llm else None
 
     strategies = ["static", "random", "reactive", "graphnet"]
-    all_records = []
+    final_summary = {}
+    total_rows = 0
 
+    # 汇总 CSV
+    summary_header = ["strategy", "game_id", "round", "coop_rate", "avg_capital", "high_risk_ratio", "gini"]
+
+    with open(args.output, "w", newline="", encoding="utf-8") as sf:
+        summary_csv = csv.writer(sf)
+        summary_csv.writerow(summary_header)
+        sf.flush()
+
+        for idx, strat in enumerate(strategies):
+            print(f"\n{'─'*60}")
+            print(f"[{idx+1}/{len(strategies)}] 正在运行 {strat.upper()} 策略 ...")
+            print(f"{'─'*60}")
+            try:
+                coop_list = run_strategy(
+                    strategy_name=strat,
+                    n_games=args.n,
+                    chunk_size=args.chunk_size,
+                    device=device,
+                    model_path=args.model_path,
+                    use_llm=args.use_llm,
+                    llm_kwargs=llm_kwargs,
+                    summary_csv=summary_csv,
+                    summary_file=sf,
+                )
+                strat_coop = np.mean(coop_list) if coop_list else 0.0
+                final_summary[strat] = strat_coop
+                total_rows += len(coop_list)
+                print(f"  ✅ {strat.upper()} 完成 | 平均合作率: {strat_coop:.4f}")
+            except Exception as e:
+                print(f"  [跳过] {strat} 出错: {e}")
+                final_summary[strat] = None
+
+    # 汇总表
+    print(f"\n{'='*60}")
+    print(f"{'策略':<20} {'平均合作率':>15}")
+    print(f"{'-'*60}")
     for strat in strategies:
-        print(f"▶ 运行策略: {strat.upper()}")
-        try:
-            records = run_strategy(
-                strategy_name=strat,
-                n_games=args.n,
-                chunk_size=args.chunk_size,
-                device=device,
-                model_path=args.model_path,
-                use_llm=args.use_llm,
-                llm_kwargs=llm_kwargs,
-            )
-            all_records.extend(records)
-        except Exception as e:
-            print(f"  [跳过] {strat} 出错: {e}")
+        val = final_summary.get(strat)
+        if val is not None:
+            print(f"{strat.upper():<20} {val:>15.4f}")
+        else:
+            print(f"{strat.upper():<20} {'ERROR':>15}")
+    print(f"{'='*60}")
 
-    # 写入 CSV
-    header = ["strategy", "game_id", "round", "coop_rate", "avg_capital", "high_risk_ratio", "gini"]
-    with open(args.output, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(header)
-        writer.writerows(all_records)
-
-    print(f"\n完成! 共 {len(all_records)} 条记录已保存至 {args.output}")
+    print(f"\n完成! 共 {total_rows} 条记录已保存至 {args.output}")
 
 
 if __name__ == "__main__":
