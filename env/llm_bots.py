@@ -79,7 +79,10 @@ class LLMBots:
                     temperature=LLMConfig.TEMPERATURE,
                     max_tokens=5
                 )
-                reply = response.choices[0].message.content.strip()
+                content = response.choices[0].message.content
+                if content is None:
+                    raise ValueError("LLM returned empty content (None)")
+                reply = content.strip()
                 match = re.search(r'[01]', reply)
                 decision = float(match.group(0)) if match else float(fallback)
 

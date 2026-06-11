@@ -7,7 +7,7 @@ import gc
 import csv
 from env.game import PublicGoodsGame
 from config import GameConfig, MODE
-from planners.baselines import StaticPlanner, RandomPlanner, ReactivePlanner
+from planners.baselines import StaticPlanner, RandomPlanner, ReactivePlanner, StaticHighRiskPlanner
 from planners.graphnet import GraphNetPlanner
 
 try:
@@ -31,6 +31,8 @@ def batch_gini(capital_matrix):
 def get_planner(strategy_name, device, model_path=None):
     if strategy_name == "static":
         return StaticPlanner()
+    elif strategy_name == "statichigh":
+        return StaticHighRiskPlanner()
     elif strategy_name == "random":
         return RandomPlanner()
     elif strategy_name == "reactive":
@@ -187,7 +189,7 @@ def main():
         "model": args.model,
     } if args.use_llm else None
 
-    strategies = ["static", "random", "reactive", "graphnet"]
+    strategies = ["static", "statichigh", "random", "reactive", "graphnet"]
     final_summary = {}
     total_rows = 0
 
