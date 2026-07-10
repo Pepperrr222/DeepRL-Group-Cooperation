@@ -50,14 +50,14 @@ def run_simulation(strategy, total_games=1000000, batch_size=2000):
     if __name__ == "__main__":
         print(f"\n[系统] 设备: {device}")
         print(f"[任务] 策略: {strategy.upper()} | 总局数: {total_games} | Batch: {batch_size}")
-
+    
     # 1. 初始化 Planner
     try:
         planner = get_planner(strategy, device)
     except Exception as e:
         print(f"[错误] {e}")
         return None, None
-
+    
     # 计算需要跑多少个 Batch
     num_batches = int(np.ceil(total_games / batch_size))
     
@@ -66,7 +66,6 @@ def run_simulation(strategy, total_games=1000000, batch_size=2000):
     global_cap_sum = torch.zeros(GameConfig.EPISODE_LENGTH, device=device)
     
     actual_total_games = 0
-
     # 2. 批量循环
     # 如果是被调用，disable=True 可以关闭进度条，或者根据需求保留
     show_progress = (__name__ == "__main__")
@@ -98,7 +97,6 @@ def run_simulation(strategy, total_games=1000000, batch_size=2000):
                 global_cap_sum[current_round_idx] += capital.mean(dim=1).sum()
         
         actual_total_games += current_bs
-
     # 3. 计算平均值
     avg_coop_per_round = (global_coop_sum / actual_total_games).cpu().numpy()
     avg_cap_per_round = (global_cap_sum / actual_total_games).cpu().numpy()
